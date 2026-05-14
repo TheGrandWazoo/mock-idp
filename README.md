@@ -6,7 +6,8 @@ grants, per-identity token shape (v1/v2), lax/strict audience gating, admin
 overrides, key rotation, CORS, and a browser token playground.
 
 Full architecture, design decisions, and test scenario coverage live in
-[`docs/mock-oidc/`](docs/mock-oidc/).
+[`docs/mock-oidc/`](docs/mock-oidc/). Running into a problem? See
+[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md).
 
 ---
 
