@@ -1,5 +1,4 @@
 import time
-from typing import Optional
 
 from authlib.jose import jwt
 from fastapi import APIRouter, Header, HTTPException, Request

@@ -3,7 +3,6 @@ import json
 
 from authlib.jose import jwt
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
 
 from .. import config as _cfg
 from ..keys import get_signing_key, key_kid
