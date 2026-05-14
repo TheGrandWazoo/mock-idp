@@ -62,6 +62,11 @@ helm upgrade --install mock-idp ./chart \
 
 ConfigMap changes trigger an automatic pod restart via the `checksum/config` annotation.
 
+## License
+
+[Elastic License 2.0](LICENSE) — free for internal and development use; hosting
+as a managed service for third parties requires a commercial license.
+
 ## Project layout
 
 ```
