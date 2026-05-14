@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  IMAGE: ghcr.io/your-org/mock-idp
+  IMAGE: ghcr.io/thegrandwazoo/mock-idp
 
 jobs:
   lint-test:

@@ -3,7 +3,7 @@ replicaCount: 1
 
 image:
   # -- Image repository.
-  repository: ghcr.io/your-org/mock-idp
+  repository: ghcr.io/thegrandwazoo/mock-idp
   # -- Image tag. Defaults to `Chart.appVersion` when empty.
   tag: ""
   # -- Image pull policy.
