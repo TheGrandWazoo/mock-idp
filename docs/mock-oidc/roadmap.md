@@ -213,6 +213,38 @@ concurrent read-while-replacing.
 default so the operational behavior in production-ish environments stays
 predictable.
 
+### 🟢 Per-audience roles and groups
+
+A user or client can present different roles and groups depending on which
+audience (service) they are authenticating against.
+
+**Why:** in real identity providers, role assignments are often scoped to a
+specific resource or application. Service B might grant a user `operator`
+access while Service C grants them `admin`. Flat per-identity role lists
+force test authors to create duplicate identities just to vary the claims.
+
+**Shape:**
+
+```yaml
+users:
+  alice:
+    password: alice-pw
+    roles: [operator]           # default — used when no audience match
+    groups: [platform-team]
+    audience_roles:
+      api://serviceB: [operator, responder]
+      api://serviceC: [admin]
+    audience_groups:
+      api://serviceC: [admin-team]
+```
+
+Resolution order: if the requested `aud` matches an `audience_roles` key,
+use that list; otherwise fall back to the top-level `roles`.
+
+**Effort:** ~30 LOC; extend `UserIdentity` and `ClientIdentity` models;
+update `user_claims` / `client_claims` to accept the resolved audience and
+pick the right role list.
+
 ### 🟢 Admin overrides include `iss` claim
 
 Currently admin can override almost any claim, but `iss` was

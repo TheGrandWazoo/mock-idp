@@ -32,6 +32,17 @@ ingress:
     # -- Name of the TLS Secret.
     secretName: kong-wildcard-cert
 
+# -- Admin token injected as MOCK_IDP_ADMIN_TOKEN env var from a Kubernetes Secret.
+# Takes precedence over `config.admin_token` in the ConfigMap.
+# Generate with: openssl rand -hex 32
+adminToken:
+  # -- Token value. A Secret named `<fullname>-admin-token` is created automatically.
+  # Leave empty if using `existingSecret`.
+  value: ""
+  # -- Name of an existing Secret containing key `admin-token`.
+  # Takes precedence over `value`.
+  existingSecret: ""
+
 # -- Resource requests and limits for the mock-idp container.
 resources:
   requests:

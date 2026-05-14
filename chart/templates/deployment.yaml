@@ -30,6 +30,13 @@ spec:
               value: /etc/mock-idp/config.yaml
             - name: ISS_BASE
               value: {{ include "mock-idp.issBase" . }}
+            {{- if or .Values.adminToken.value .Values.adminToken.existingSecret }}
+            - name: MOCK_IDP_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.adminToken.existingSecret }}{{ .Values.adminToken.existingSecret }}{{ else }}{{ include "mock-idp.fullname" . }}-admin-token{{ end }}
+                  key: admin-token
+            {{- end }}
           volumeMounts:
             - name: config
               mountPath: /etc/mock-idp
