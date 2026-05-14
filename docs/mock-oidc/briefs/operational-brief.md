@@ -212,6 +212,78 @@ when something breaks. Mitigated by:
 
 ---
 
+## Kong OIDC integration notes
+
+This section covers observed behavior specific to Kong's OIDC plugin with
+claims-to-headers and a downstream header normalization function.
+
+### Claims-to-headers mapping
+
+Kong's OIDC plugin maps JWT claims to HTTP headers before forwarding the
+request upstream. The mapping is case-sensitive — if the plugin config says
+`roles → X-User-Roles`, the claim name in the token must be exactly `roles`.
+
+The v1 and v2 token shapes both emit `roles` and `groups` at the top level, so
+either shape works for Kong claim mapping. The difference between shapes is the
+surrounding identity fields (`oid`, `upn`, `preferred_username`, `appid` vs
+`azp`). Check which claims your normalization function reads and pick the shape
+that matches.
+
+### Array claims are base64-encoded by Kong
+
+Kong base64-encodes array-valued claims before writing them as headers. This
+is intentional — raw JSON arrays (`["operator","responder"]`) contain
+characters that can break HTTP header parsing.
+
+Your normalization function should decode before forwarding upstream:
+
+```
+X-User-Roles: WyJvcGVyYXRvciIsInJlc3BvbmRlciJd
+                 ↓ base64-decode
+["operator","responder"]
+```
+
+**Edge cases worth testing in mock-idp:**
+
+| Scenario | How to reproduce |
+|---|---|
+| Empty array | Set `roles: []` on the identity in config |
+| Single item | Set `roles: [operator]` |
+| Multiple items | Default alice: `roles: [operator, responder]` |
+| Claim absent entirely | Use `X-Omit-Claims: roles` request header when fetching the token |
+
+The `X-Omit-Claims` header tells mock-idp to drop named claims from the token
+before signing. Use it to test "what does the normalization function do when
+the roles header is missing?"
+
+### Admin token in headers
+
+The `X-Admin-Token` header for `/admin/rotate-jwks` is a plain string header —
+not a Bearer token — so it is not subject to the base64 array encoding. It
+passes through Kong unchanged if the route is exposed through the gateway.
+
+### JWKS caching and key rotation
+
+Kong caches the JWKS response. After a `/admin/rotate-jwks` call, previously
+issued tokens will fail validation until the cache expires (typically 60–300s
+depending on plugin config). Use this deliberately to test the gateway's
+handling of signature validation failure after key rotation.
+
+To force an immediate re-fetch without waiting for the TTL, restart the Kong
+pod or call the Kong admin API to clear the OIDC plugin cache if your version
+supports it.
+
+### Audience validation
+
+Kong's OIDC `config.audience` field checks the `aud` claim in the token. Set
+`auth_mode: strict` in mock-idp and configure `allowed_audiences` on the
+identity to test that Kong correctly rejects tokens with a mismatched audience.
+In `lax` mode, mock-idp issues tokens for any requested audience regardless of
+the identity's allowlist — useful for getting tokens into Kong during setup, but
+switch to strict for audience-validation test cases.
+
+---
+
 ## When to decommission
 
 See `briefs/stakeholder-brief.md` §Sunset criteria. Decommissioning is a
