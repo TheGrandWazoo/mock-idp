@@ -1,0 +1,27 @@
+# {{ template "chart.name" . }}
+
+{{ template "chart.description" . }}
+
+## Chart version: {{ template "chart.version" . }} — App version: {{ template "chart.appVersion" . }}
+
+## Installing
+
+```bash
+helm upgrade --install mock-idp ./chart \
+  -n mock-idp --create-namespace \
+  --set ingress.host=mock-idp.example.com \
+  --set image.tag=sha-abc1234
+```
+
+Override the identity store without touching `values.yaml`:
+
+```bash
+helm upgrade --install mock-idp ./chart \
+  -n mock-idp \
+  -f values.yaml \
+  -f environments/staging-values.yaml
+```
+
+## Values
+
+{{ template "chart.valuesSection" . }}

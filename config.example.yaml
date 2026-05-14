@@ -1,0 +1,59 @@
+auth_mode: lax
+cors_allow_origins: ["*"]
+admin_token: change-me-in-real-deployments
+
+users:
+  alice:
+    password: alice-pw
+    upn: alice@example.com
+    preferred_username: alice@example.com
+    oid: 11111111-1111-1111-1111-aaaaaaaaaaaa
+    tid: 22222222-2222-2222-2222-222222222222
+    token_version: v2
+    token_lifetime_seconds: 300
+    roles: [operator, responder]
+    groups: [platform-team]
+    allowed_audiences:
+      - api://serviceB
+      - api://serviceC
+    extra_claims:
+      department: engineering
+      cost_center: cc-1234
+
+  bob:
+    password: bob-pw
+    upn: bob@example.com
+    preferred_username: bob@example.com
+    oid: 11111111-1111-1111-1111-bbbbbbbbbbbb
+    token_version: v2
+    token_lifetime_seconds: 300
+    roles: [metrics-reader]
+    groups: [analytics-team]
+    allowed_audiences: [api://serviceB]
+
+clients:
+  service-a:
+    client_id: 01010101-1010-1010-1010-aaaaaaaaaaaa
+    secret: serviceA-secret
+    label: ServiceA
+    token_version: v1
+    token_lifetime_seconds: 3600
+    roles: [m2m]
+    groups: [service-accounts]
+    allowed_audiences: [api://serviceB]
+    extra_claims:
+      tier: 1
+
+  service-b:
+    client_id: 02020202-2020-2020-2020-bbbbbbbbbbbb
+    secret: serviceB-secret
+    label: ServiceB
+    token_version: v1
+    roles: [m2m]
+    groups: [service-accounts]
+    allowed_audiences: [api://serviceC]
+
+  "00000000-0000-0000-0000-000000000000":
+    secret: admin-secret
+    label: TestAdmin
+    override_any_claim: true

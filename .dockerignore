@@ -1,0 +1,43 @@
+# Version control
+.git/
+.gitignore
+.github/
+
+# Python caches — not needed in image
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+.coverage
+htmlcov/
+
+# Virtual environment — image builds its own via uv
+.venv/
+
+# Tests — not shipped in the image
+tests/
+
+# Docs and chart — not needed at runtime
+docs/
+chart/
+manifests/
+README.md
+CLAUDE.md
+.claude/
+
+# Config example — real config is mounted at runtime
+config.example.yaml
+
+# Dev tooling
+.pre-commit-config.yaml
+.env
+.env.*
+
+# Editor
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

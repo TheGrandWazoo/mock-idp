@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mock-idp.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mock-idp.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mock-idp.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "mock-idp.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: idp-mock
+      annotations:
+        checksum/config: {{ toYaml .Values.config | sha256sum }}
+    spec:
+      containers:
+        - name: mock-idp
+          image: {{ include "mock-idp.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: CONFIG_PATH
+              value: /etc/mock-idp/config.yaml
+            - name: ISS_BASE
+              value: {{ include "mock-idp.issBase" . }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mock-idp
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "mock-idp.fullname" . }}-config

@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mock OIDC Playground</title>
+  <style>
+    :root {
+      --accent: #0066cc;
+      --bg: #f5f6f7;
+      --card: #ffffff;
+      --text: #1a1a1a;
+      --muted: #666;
+      --border: #d0d4d9;
+      --code-bg: #1e1e1e;
+      --code-fg: #e8e8e8;
+      --error-bg: #fdecec;
+      --error-border: #f4a;
+      --error-fg: #8a1414;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        Ubuntu, Cantarell, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 2rem 1rem;
+      line-height: 1.5;
+    }
+    .container { max-width: 1100px; margin: 0 auto; }
+    h1 { margin-top: 0; font-weight: 600; }
+    .subtitle { color: var(--muted); margin-top: -0.5rem; margin-bottom: 2rem; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1.25rem;
+    }
+    .card h2 {
+      margin-top: 0;
+      margin-bottom: 1rem;
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .row { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .field { flex: 1 1 220px; }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 500;
+      margin-bottom: 0.25rem;
+    }
+    input, select {
+      width: 100%;
+      padding: 0.5rem 0.6rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 0.95rem;
+      font-family: inherit;
+      background: white;
+      color: var(--text);
+    }
+    input:focus, select:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: -1px;
+    }
+    button {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 0.55rem 1.5rem;
+      border-radius: 4px;
+      font-size: 0.95rem;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    button:hover { filter: brightness(1.1); }
+    button:active { transform: translateY(1px); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.secondary {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--border);
+      padding: 0.3rem 0.75rem;
+      font-size: 0.82rem;
+    }
+    pre {
+      background: var(--code-bg);
+      color: var(--code-fg);
+      padding: 0.9rem 1rem;
+      border-radius: 4px;
+      overflow-x: auto;
+      font-size: 0.82rem;
+      margin: 0.4rem 0;
+      word-break: break-all;
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Cascadia Mono",
+        "Roboto Mono", monospace;
+      line-height: 1.45;
+    }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+    @media (max-width: 700px) { .grid-2 { grid-template-columns: 1fr; } }
+    .output-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 0.5rem;
+      gap: 1rem;
+    }
+    .error {
+      background: var(--error-bg);
+      border: 1px solid var(--error-border);
+      color: var(--error-fg);
+      padding: 1rem;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.88rem;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .hint { color: var(--muted); font-size: 0.82rem; margin-top: 0.25rem; }
+    .hint code {
+      background: rgba(0,0,0,0.06);
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-size: 0.95em;
+    }
+    details.card > summary {
+      cursor: pointer;
+      user-select: none;
+      color: var(--accent);
+      font-weight: 500;
+      list-style: none;
+    }
+    details.card > summary::-webkit-details-marker { display: none; }
+    details.card > summary::before {
+      content: "▶ ";
+      display: inline-block;
+      transition: transform 0.15s;
+    }
+    details.card[open] > summary::before { transform: rotate(90deg); }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .label-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Mock OIDC Playground</h1>
+    <p class="subtitle">Pick an identity, get a JWT. No setup, no curl.</p>
+
+    <div class="card">
+      <h2>1. Identity</h2>
+      <div class="row">
+        <div class="field">
+          <label for="identity">User or client</label>
+          <select id="identity"><option>Loading…</option></select>
+          <div class="hint" id="identity-hint">&nbsp;</div>
+        </div>
+        <div class="field">
+          <label for="credential" id="credential-label">Password / secret</label>
+          <input type="password" id="credential" placeholder="password or secret"
+                 autocomplete="off" spellcheck="false">
+          <div class="hint">Remembered per identity in this browser only.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>2. Target</h2>
+      <div class="row">
+        <div class="field">
+          <label for="issuer">Issuer slug</label>
+          <input type="text" id="issuer" value="default" spellcheck="false">
+          <div class="hint">URL path segment; any URL-safe string</div>
+        </div>
+        <div class="field">
+          <label for="audience">Audience (<code>aud</code>)</label>
+          <input type="text" id="audience" value="api://serviceB" spellcheck="false">
+          <div class="hint">Becomes the <code>aud</code> claim</div>
+        </div>
+        <div class="field">
+          <label for="shape">Token shape override</label>
+          <select id="shape">
+            <option value="">Default (from identity config)</option>
+            <option value="v1">v1</option>
+            <option value="v2">v2</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="toolbar">
+        <button id="submit">Issue Token</button>
+        <span class="hint" id="status">&nbsp;</span>
+      </div>
+    </div>
+
+    <div id="error" class="card error" hidden></div>
+
+    <div id="output" hidden>
+      <div class="card">
+        <h2>JWT</h2>
+        <pre id="jwt"></pre>
+        <div class="output-row">
+          <span class="hint">Raw token — paste anywhere</span>
+          <button class="secondary" data-copy="jwt">Copy</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Decoded</h2>
+        <div class="grid-2">
+          <div>
+            <label>Header</label>
+            <pre id="header"></pre>
+          </div>
+          <div>
+            <label>Payload</label>
+            <pre id="payload"></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Snippets</h2>
+        <div class="label-row">
+          <label>Authorization header</label>
+          <button class="secondary" data-copy="auth-header">Copy</button>
+        </div>
+        <pre id="auth-header"></pre>
+        <div class="label-row" style="margin-top: 1rem;">
+          <label>curl example</label>
+          <button class="secondary" data-copy="curl">Copy</button>
+        </div>
+        <pre id="curl"></pre>
+      </div>
+
+      <details class="card">
+        <summary>Raw token response</summary>
+        <pre id="raw-response" style="margin-top: 0.6rem;"></pre>
+      </details>
+    </div>
+  </div>
+
+  <script>
+    // ---------- State ----------
+    const state = { identities: null };
+
+    // ---------- DOM ----------
+    const $ = (id) => document.getElementById(id);
+    const identitySel = $('identity');
+    const credentialInput = $('credential');
+    const credentialLabel = $('credential-label');
+    const identityHint = $('identity-hint');
+    const submitBtn = $('submit');
+    const statusEl = $('status');
+    const errorEl = $('error');
+    const outputEl = $('output');
+
+    // ---------- Helpers ----------
+    function showError(msg) {
+      errorEl.textContent = msg;
+      errorEl.hidden = false;
+      outputEl.hidden = true;
+    }
+    function clearError() {
+      errorEl.hidden = true;
+      errorEl.textContent = '';
+    }
+    function b64urlDecode(s) {
+      s = s.replace(/-/g, '+').replace(/_/g, '/');
+      s += '='.repeat((4 - s.length % 4) % 4);
+      return atob(s);
+    }
+    function decodeJwt(token) {
+      const parts = token.split('.');
+      if (parts.length !== 3) throw new Error('not a JWT (expected three segments)');
+      return {
+        header: JSON.parse(b64urlDecode(parts[0])),
+        payload: JSON.parse(b64urlDecode(parts[1])),
+      };
+    }
+    function lsKey(type, key) { return 'mock-oidc:' + type + ':' + key; }
+    function rememberCredential(type, key, value) {
+      try { localStorage.setItem(lsKey(type, key), value); } catch (e) {}
+    }
+    function recallCredential(type, key) {
+      try { return localStorage.getItem(lsKey(type, key)) || ''; } catch (e) { return ''; }
+    }
+    function selectedIdentity() {
+      const val = identitySel.value;
+      if (val.startsWith('user:'))    return { type: 'user',   key: val.slice(5) };
+      if (val.startsWith('client:'))  return { type: 'client', key: val.slice(7) };
+      return null;
+    }
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>]/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+    }
+    function updateIdentityHint() {
+      const sel = selectedIdentity();
+      if (!sel || !state.identities) {
+        identityHint.innerHTML = '&nbsp;';
+        credentialLabel.textContent = 'Password / secret';
+        credentialInput.value = '';
+        return;
+      }
+      const isUser = sel.type === 'user';
+      const rec = isUser
+        ? state.identities.users[sel.key]
+        : state.identities.clients[sel.key];
+      if (!rec) {
+        identityHint.innerHTML = '&nbsp;';
+        return;
+      }
+      const aud = (rec.allowed_audiences || []).join(', ') || '(any in lax mode)';
+      const defaultShape = rec.token_version || (isUser ? 'v2' : 'v1');
+      const adminTag = rec.override_any_claim
+        ? ' · <strong style="color:#a00">admin override</strong>'
+        : '';
+      identityHint.innerHTML =
+        `${isUser ? 'User' : 'Client'} · default shape: ` +
+        `<code>${escapeHtml(defaultShape)}</code> · allowed_audiences: ` +
+        `${escapeHtml(aud)}${adminTag}`;
+      credentialLabel.textContent = isUser ? 'Password' : 'Client secret';
+      credentialInput.placeholder = isUser ? 'password' : 'client_secret';
+      credentialInput.value = recallCredential(sel.type, sel.key);
+    }
+
+    // ---------- Init ----------
+    async function loadIdentities() {
+      try {
+        const r = await fetch('/debug/identities');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        state.identities = await r.json();
+      } catch (err) {
+        showError('Could not load identities: ' + err.message);
+        identitySel.innerHTML = '<option>(error — is /debug/identities reachable?)</option>';
+        return;
+      }
+      identitySel.innerHTML = '';
+      const userKeys   = Object.keys(state.identities.users   || {}).sort();
+      const clientKeys = Object.keys(state.identities.clients || {}).sort();
+      if (userKeys.length) {
+        const og = document.createElement('optgroup');
+        og.label = 'Users';
+        for (const k of userKeys) {
+          const o = document.createElement('option');
+          o.value = 'user:' + k;
+          o.textContent = k;
+          og.appendChild(o);
+        }
+        identitySel.appendChild(og);
+      }
+      if (clientKeys.length) {
+        const og = document.createElement('optgroup');
+        og.label = 'Clients';
+        for (const k of clientKeys) {
+          const o = document.createElement('option');
+          o.value = 'client:' + k;
+          const rec = state.identities.clients[k];
+          o.textContent = rec.label ? `${k} (${rec.label})` : k;
+          og.appendChild(o);
+        }
+        identitySel.appendChild(og);
+      }
+      updateIdentityHint();
+    }
+
+    identitySel.addEventListener('change', updateIdentityHint);
+    credentialInput.addEventListener('change', () => {
+      const sel = selectedIdentity();
+      if (sel) rememberCredential(sel.type, sel.key, credentialInput.value);
+    });
+
+    // ---------- Issue ----------
+    async function issueToken() {
+      clearError();
+      const sel = selectedIdentity();
+      if (!sel) return showError('No identity selected.');
+
+      const issuer = $('issuer').value.trim() || 'default';
+      const audience = $('audience').value.trim() || 'api://serviceB';
+      const shape = $('shape').value;
+      const credential = credentialInput.value;
+
+      const body = new URLSearchParams();
+      let curlBody;
+      if (sel.type === 'user') {
+        body.set('grant_type', 'password');
+        body.set('username', sel.key);
+        body.set('password', credential);
+        body.set('resource', audience);
+        curlBody = `grant_type=password&username=${encodeURIComponent(sel.key)}` +
+                   `&password=${encodeURIComponent(credential)}` +
+                   `&resource=${encodeURIComponent(audience)}`;
+      } else {
+        body.set('grant_type', 'client_credentials');
+        body.set('client_id', sel.key);
+        body.set('client_secret', credential);
+        body.set('resource', audience);
+        curlBody = `grant_type=client_credentials&client_id=${encodeURIComponent(sel.key)}` +
+                   `&client_secret=${encodeURIComponent(credential)}` +
+                   `&resource=${encodeURIComponent(audience)}`;
+      }
+
+      const headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
+      let curlHeaderArg = '';
+      if (shape) {
+        headers['X-Token-Shape'] = shape;
+        curlHeaderArg = ` \\\n  -H "X-Token-Shape: ${shape}"`;
+      }
+
+      statusEl.textContent = 'Issuing…';
+      submitBtn.disabled = true;
+      try {
+        const r = await fetch(`/${encodeURIComponent(issuer)}/token`, {
+          method: 'POST', headers, body,
+        });
+        const data = await r.json();
+        if (!r.ok) {
+          showError(`HTTP ${r.status}\n` + JSON.stringify(data, null, 2));
+          statusEl.textContent = 'failed';
+          return;
+        }
+        const jwt = data.access_token;
+        const decoded = decodeJwt(jwt);
+
+        $('jwt').textContent = jwt;
+        $('header').textContent = JSON.stringify(decoded.header, null, 2);
+        $('payload').textContent = JSON.stringify(decoded.payload, null, 2);
+        $('auth-header').textContent = `Authorization: Bearer ${jwt}`;
+        $('curl').textContent =
+          `curl -X POST ${location.origin}/${encodeURIComponent(issuer)}/token` +
+          curlHeaderArg +
+          ` \\\n  -d "${curlBody}"`;
+        $('raw-response').textContent = JSON.stringify(data, null, 2);
+
+        outputEl.hidden = false;
+        statusEl.textContent = `issued · ${new Date().toLocaleTimeString()}`;
+      } catch (err) {
+        showError('Request failed: ' + err.message);
+        statusEl.textContent = 'failed';
+      } finally {
+        submitBtn.disabled = false;
+      }
+    }
+
+    submitBtn.addEventListener('click', issueToken);
+
+    // Enter submits from any text field
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.shiftKey) return;
+      const t = document.activeElement;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT')) issueToken();
+    });
+
+    // ---------- Copy buttons ----------
+    document.body.addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-copy]');
+      if (!btn) return;
+      const id = btn.getAttribute('data-copy');
+      const text = $(id).textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+        const original = btn.textContent;
+        btn.textContent = 'Copied!';
+        btn.disabled = true;
+        setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 1200);
+      } catch (err) {
+        alert('Copy failed: ' + err.message);
+      }
+    });
+
+    // ---------- Boot ----------
+    loadIdentities();
+  </script>
+</body>
+</html>

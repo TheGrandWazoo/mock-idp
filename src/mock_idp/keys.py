@@ -1,0 +1,27 @@
+from authlib.jose import JsonWebKey
+
+
+def _new_key(kid: str) -> JsonWebKey:
+    return JsonWebKey.generate_key("RSA", 2048, is_private=True, options={"kid": kid})
+
+
+def key_kid(key: JsonWebKey) -> str:
+    return key.as_dict(is_private=False)["kid"]
+
+
+_signing_key = _new_key("mock-py-1")
+_alt_key = _new_key("mock-py-alt")  # never published; used by wrong-sig endpoint
+
+
+def get_signing_key() -> JsonWebKey:
+    return _signing_key
+
+
+def get_alt_key() -> JsonWebKey:
+    return _alt_key
+
+
+def rotate() -> JsonWebKey:
+    global _signing_key
+    _signing_key = _new_key("mock-py-rotated")
+    return _signing_key

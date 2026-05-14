@@ -1,0 +1,20 @@
+# Patterns to exclude when packaging the chart with `helm package`.
+# Syntax follows .gitignore rules.
+
+# Version control
+.git/
+.gitignore
+
+# Helm docs template — used to generate README.md, not needed in the package
+README.md.gotmpl
+
+# Temporary / editor files
+*.tmp
+*.bak
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# CI / local dev artifacts
+.tgz
