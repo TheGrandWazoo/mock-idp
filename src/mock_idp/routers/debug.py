@@ -46,7 +46,12 @@ async def debug_decode(body: DecodeRequest):
 async def debug_identities():
     return {
         "users": {k: redact(v.model_dump()) for k, v in _cfg.USERS.items()},
-        "clients": {k: redact(v.model_dump()) for k, v in _cfg._clients_raw.items()},
+        "service_principals": {
+            k: redact(v.model_dump()) for k, v in _cfg._service_principals_raw.items()
+        },
+        "client_apps": {
+            k: v.model_dump() for k, v in _cfg.CLIENT_APPS.items()
+        },
     }
 
 
@@ -57,7 +62,8 @@ async def debug_config():
         "cors_allow_origins": _cfg.CORS_ORIGINS,
         "iss_base": _cfg.ISS_BASE,
         "user_count": len(_cfg.USERS),
-        "client_count": len(_cfg._clients_raw),
+        "service_principal_count": len(_cfg._service_principals_raw),
+        "client_app_count": len(_cfg.CLIENT_APPS),
         "signing_kid": key_kid(get_signing_key()),
         "alt_kid_present": True,
     }

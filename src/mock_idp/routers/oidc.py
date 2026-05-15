@@ -6,16 +6,16 @@ from fastapi.responses import JSONResponse
 
 from .. import config as _cfg
 from ..keys import get_alt_key, get_signing_key
+from ..providers import get_provider
 from ..tokens import (
     apply_overrides,
     check_audience,
-    client_claims,
     omit,
     resolve_aud,
     resolve_expiry,
+    resolve_roles,
     resolve_shape,
     sign,
-    user_claims,
 )
 
 router = APIRouter()
@@ -53,26 +53,30 @@ async def token(issuer: str, request: Request):
     headers = {k.lower(): v for k, v in request.headers.items()}
     grant_type = form.get("grant_type")
     aud = resolve_aud(form)
+    provider = get_provider("entra_id")
 
     if grant_type == "password":
-        user = _cfg.USERS.get(form.get("username") or "")
+        user_key = form.get("username") or ""
+        user = _cfg.USERS.get(user_key)
         if not user or user.password != form.get("password"):
             raise HTTPException(401, "invalid_grant")
-        check_audience(user, aud)
+        check_audience(user_key, user, aud)
         shape = resolve_shape(user.token_version, form, headers.get("x-token-shape"))
         expires_in = resolve_expiry(user.token_lifetime_seconds, headers)
-        claims = user_claims(issuer, user, aud, shape, expires_in, form.get("client_id"))
+        roles = resolve_roles(user_key, user, aud)
+        claims = provider.user_claims(issuer, user, aud, shape, expires_in, roles, form.get("client_id"))
 
     elif grant_type == "client_credentials":
-        client_key = form.get("client_id") or ""
-        client = _cfg.CLIENTS.get(client_key)
-        if not client or client.secret != form.get("client_secret"):
+        sp_key = form.get("client_id") or ""
+        sp = _cfg.SERVICE_PRINCIPALS.get(sp_key)
+        if not sp or sp.secret != form.get("client_secret"):
             raise HTTPException(401, "invalid_client")
-        check_audience(client, aud)
-        shape = resolve_shape(client.token_version, form, headers.get("x-token-shape"))
-        expires_in = resolve_expiry(client.token_lifetime_seconds, headers)
-        claims = client_claims(issuer, client._canonical_id, client, aud, shape, expires_in)
-        if client.override_any_claim:
+        check_audience(sp_key, sp, aud)
+        shape = resolve_shape(sp.token_version, form, headers.get("x-token-shape"))
+        expires_in = resolve_expiry(sp.token_lifetime_seconds, headers)
+        roles = resolve_roles(sp_key, sp, aud)
+        claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, expires_in, roles)
+        if sp.override_any_claim:
             apply_overrides(claims, form)
 
     else:
@@ -93,22 +97,26 @@ async def token_wrong_sig(issuer: str, request: Request):
     form = dict(await request.form())
     headers = {k.lower(): v for k, v in request.headers.items()}
     aud = resolve_aud(form)
+    provider = get_provider("entra_id")
 
     if form.get("grant_type") == "password":
-        user = _cfg.USERS.get(form.get("username") or "")
+        user_key = form.get("username") or ""
+        user = _cfg.USERS.get(user_key)
         if not user or user.password != form.get("password"):
             raise HTTPException(401, "invalid_grant")
-        check_audience(user, aud)
+        check_audience(user_key, user, aud)
         shape = resolve_shape(user.token_version, form, headers.get("x-token-shape"))
-        claims = user_claims(issuer, user, aud, shape, 3600, form.get("client_id"))
+        roles = resolve_roles(user_key, user, aud)
+        claims = provider.user_claims(issuer, user, aud, shape, 3600, roles, form.get("client_id"))
     else:
-        client_key = form.get("client_id") or ""
-        client = _cfg.CLIENTS.get(client_key)
-        if not client or client.secret != form.get("client_secret"):
+        sp_key = form.get("client_id") or ""
+        sp = _cfg.SERVICE_PRINCIPALS.get(sp_key)
+        if not sp or sp.secret != form.get("client_secret"):
             raise HTTPException(401, "invalid_client")
-        check_audience(client, aud)
-        shape = resolve_shape(client.token_version, form, headers.get("x-token-shape"))
-        claims = client_claims(issuer, client._canonical_id, client, aud, shape, 3600)
+        check_audience(sp_key, sp, aud)
+        shape = resolve_shape(sp.token_version, form, headers.get("x-token-shape"))
+        roles = resolve_roles(sp_key, sp, aud)
+        claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, 3600, roles)
 
     return {
         "access_token": sign(claims, get_alt_key()),

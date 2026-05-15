@@ -1,4 +1,3 @@
-import time
 from typing import Optional
 
 from authlib.jose import JsonWebKey, jwt
@@ -6,7 +5,7 @@ from fastapi import HTTPException
 
 from . import config as _cfg
 from .keys import key_kid
-from .models import ClientRecord, UserRecord
+from .models import ServicePrincipalRecord, UserRecord
 
 _LIST_CLAIMS = {"roles", "groups", "amr"}
 _RESERVED_FORM_FIELDS = {
@@ -51,11 +50,49 @@ def resolve_expiry(default: int, headers: dict) -> int:
     return default or 3600
 
 
-def check_audience(identity: UserRecord | ClientRecord, aud: str) -> None:
+def resolve_roles(identity_key: str, identity: UserRecord | ServicePrincipalRecord, aud: str) -> list[str]:
+    """Resolve roles for the requested audience.
+
+    Uses the client-app grants table when a matching ClientAppRecord exists;
+    falls back to the flat roles list on the identity otherwise.
+    """
+    app = _cfg.CLIENT_APPS.get(aud)
+    if app is not None:
+        # SPs look up grants by their original config name, not by UUID alias
+        grants_key = (
+            identity._name
+            if isinstance(identity, ServicePrincipalRecord) and identity._name
+            else identity_key
+        )
+        return list(app.grants.get(grants_key, []))
+    return list(identity.roles)
+
+
+def check_audience(identity_key: str, identity: UserRecord | ServicePrincipalRecord, aud: str) -> None:
     if _cfg.MODE != "strict":
         return
-    if isinstance(identity, ClientRecord) and identity.override_any_claim:
+    if isinstance(identity, ServicePrincipalRecord) and identity.override_any_claim:
         return
+    app = _cfg.CLIENT_APPS.get(aud)
+    if app is not None:
+        # grants model: reject if this identity has no grant on the app
+        grants_key = (
+            identity._name
+            if isinstance(identity, ServicePrincipalRecord) and identity._name
+            else identity_key
+        )
+        if grants_key not in app.grants:
+            raise HTTPException(
+                400,
+                detail={
+                    "error": "invalid_target",
+                    "error_description": (
+                        f"Identity {identity_key!r} has no grant on {aud!r}."
+                    ),
+                },
+            )
+        return
+    # flat model fallback: check allowed_audiences
     if aud not in identity.allowed_audiences:
         raise HTTPException(
             400,
@@ -66,71 +103,6 @@ def check_audience(identity: UserRecord | ClientRecord, aud: str) -> None:
                 ),
             },
         )
-
-
-def _common(issuer: str, aud: str, expires_in: int) -> dict:
-    now = int(time.time())
-    return {
-        "iss": f"{_cfg.ISS_BASE}/{issuer}",
-        "aud": aud,
-        "iat": now,
-        "nbf": now,
-        "exp": now + expires_in,
-    }
-
-
-def user_claims(
-    issuer: str,
-    user: UserRecord,
-    aud: str,
-    shape: str,
-    expires_in: int,
-    oauth_client_id: Optional[str],
-) -> dict:
-    c = _common(issuer, aud, expires_in)
-    c["sub"] = user.oid
-    c["oid"] = user.oid
-    c["tid"] = user.tid
-    c["roles"] = list(user.roles)
-    c["groups"] = list(user.groups)
-    if shape == "v1":
-        c["upn"] = user.upn
-        c["unique_name"] = user.upn
-        c["ver"] = "1.0"
-        if oauth_client_id:
-            c["appid"] = oauth_client_id
-    else:
-        c["preferred_username"] = user.preferred_username
-        c["ver"] = "2.0"
-        if oauth_client_id:
-            c["azp"] = oauth_client_id
-    if user.extra_claims:
-        c.update(user.extra_claims)
-    return c
-
-
-def client_claims(
-    issuer: str,
-    canonical_id: str,
-    client: ClientRecord,
-    aud: str,
-    shape: str,
-    expires_in: int,
-) -> dict:
-    c = _common(issuer, aud, expires_in)
-    c["sub"] = canonical_id
-    c["tid"] = client.tid
-    c["roles"] = list(client.roles)
-    c["groups"] = list(client.groups)
-    if shape == "v1":
-        c["appid"] = canonical_id
-        c["ver"] = "1.0"
-    else:
-        c["azp"] = canonical_id
-        c["ver"] = "2.0"
-    if client.extra_claims:
-        c.update(client.extra_claims)
-    return c
 
 
 def apply_overrides(claims: dict, form: dict) -> None:

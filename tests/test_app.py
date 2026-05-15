@@ -135,6 +135,54 @@ def test_password_grant_with_client_id_adds_azp(client):
     assert "azp" in payload
 
 
+# ── Grants model ───────────────────────────────────────────────────────────
+
+
+def test_grants_resolve_correct_roles_for_audience(client):
+    """Alice gets operator+responder on serviceB but only reader on serviceC."""
+    r_b = client.post(
+        "/default/token",
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw",
+              "resource": "api://serviceB"},
+    )
+    r_c = client.post(
+        "/default/token",
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw",
+              "resource": "api://serviceC"},
+    )
+    roles_b = _decode_payload(r_b.json()["access_token"])["roles"]
+    roles_c = _decode_payload(r_c.json()["access_token"])["roles"]
+    assert sorted(roles_b) == ["operator", "responder"]
+    assert roles_c == ["reader"]
+
+
+def test_grants_sp_resolves_by_name_not_uuid(client):
+    """service-a grant is resolved even when authenticating with UUID client_id."""
+    r = client.post(
+        "/default/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": "01010101-1010-1010-1010-aaaaaaaaaaaa",
+            "client_secret": "serviceA-secret",
+            "resource": "api://serviceB",
+        },
+    )
+    assert r.status_code == 200
+    payload = _decode_payload(r.json()["access_token"])
+    assert payload["roles"] == ["m2m"]
+
+
+def test_grants_no_grant_returns_empty_roles_in_lax(client):
+    """bob has no grant on serviceC — lax mode returns empty roles, not 400."""
+    r = client.post(
+        "/default/token",
+        data={"grant_type": "password", "username": "bob", "password": "bob-pw",
+              "resource": "api://serviceC"},
+    )
+    assert r.status_code == 200
+    assert _decode_payload(r.json()["access_token"])["roles"] == []
+
+
 # ── Client credentials ─────────────────────────────────────────────────────
 
 
@@ -150,7 +198,6 @@ def test_client_credentials_happy_path(client):
     )
     assert r.status_code == 200
     payload = _decode_payload(r.json()["access_token"])
-    # alias resolves to UUID in token
     assert payload["appid"] == "01010101-1010-1010-1010-aaaaaaaaaaaa"
     assert payload["ver"] == "1.0"
 
@@ -280,6 +327,24 @@ def test_strict_mode_allows_listed_audience(client):
         m.MODE = original
 
 
+def test_strict_mode_rejects_identity_without_grant(client):
+    """bob has no grant on serviceC — strict mode rejects it."""
+    import mock_idp.config as m
+
+    original = m.MODE
+    m.MODE = "strict"
+    try:
+        r = client.post(
+            "/default/token",
+            data={"grant_type": "password", "username": "bob", "password": "bob-pw",
+                  "resource": "api://serviceC"},
+        )
+        assert r.status_code == 400
+        assert r.json()["detail"]["error"] == "invalid_target"
+    finally:
+        m.MODE = original
+
+
 # ── Admin override ─────────────────────────────────────────────────────────
 
 
@@ -350,7 +415,6 @@ def test_wrong_sig_endpoint(client):
         },
     )
     assert r.status_code == 200
-    # kid in token header should NOT match the published JWKS kid
     import base64
     import json as _json
 
@@ -396,8 +460,9 @@ def test_debug_identities_redacts_secrets(client):
     data = r.json()
     for rec in data["users"].values():
         assert rec["password"] == "***"
-    for rec in data["clients"].values():
+    for rec in data["service_principals"].values():
         assert rec["secret"] == "***"
+    assert "client_apps" in data
 
 
 def test_debug_config(client):
