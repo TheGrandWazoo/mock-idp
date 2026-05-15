@@ -1,5 +1,11 @@
 # mock-idp
 
+[![CI](https://github.com/TheGrandWazoo/mock-idp/actions/workflows/ci.yml/badge.svg)](https://github.com/TheGrandWazoo/mock-idp/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/TheGrandWazoo/mock-idp)](https://github.com/TheGrandWazoo/mock-idp/releases)
+[![Python](https://img.shields.io/badge/python-3.14%2B-blue?logo=python&logoColor=white)](https://python.org)
+[![Docker](https://img.shields.io/badge/ghcr.io-mock--idp-blue?logo=docker&logoColor=white)](https://github.com/TheGrandWazoo/mock-idp/pkgs/container/mock-idp)
+[![License: ELv2](https://img.shields.io/badge/license-ELv2-orange)](LICENSE)
+
 FastAPI mock identity provider that emits configurable OIDC-compliant JWTs for
 testing API gateway authentication. Supports `password` and `client_credentials`
 grants, per-identity token shape (v1/v2), lax/strict audience gating, admin
@@ -71,9 +77,21 @@ as a managed service for third parties requires a commercial license.
 ## Project layout
 
 ```
-src/
-  app.py            FastAPI application (~330 LOC)
-  playground.html   Token playground served at GET /
+src/mock_idp/
+  main.py           FastAPI app entrypoint
+  config.py         Config loader; exports USERS, SERVICE_PRINCIPALS, CLIENT_APPS
+  models.py         Pydantic models (UserRecord, ServicePrincipalRecord, ClientAppRecord, …)
+  tokens.py         Provider-agnostic helpers: resolve_roles, check_audience, sign, …
+  keys.py           RSA key generation and rotation
+  providers/
+    __init__.py     Provider registry: get_provider(name) → module
+    entra_id.py     Entra ID claim building: user_claims(), sp_claims()
+  routers/
+    oidc.py         Discovery, JWKS, /token, /userinfo endpoints
+    admin.py        POST /admin/rotate-jwks
+    debug.py        /debug/identities, /debug/config, /debug/decode
+    playground.py   Serves playground.html at GET /
+src/playground.html Browser token playground
 tests/
   test_app.py       pytest suite
 chart/              Helm chart
@@ -82,9 +100,9 @@ manifests/
 .github/workflows/
   ci.yml            Lint → test → build/push → Trivy scan
 .pre-commit-config.yaml  Pre-commit hooks
-config.example.yaml Sample identity store for local dev
+config.example.yaml Sample identity store for local dev (v0.3 schema)
 Dockerfile
 pyproject.toml      Project metadata and dependencies
 uv.lock             Locked dependency versions
-docs/mock-oidc/     Architecture, ADR, roadmap, test scenarios, briefs
+docs/mock-oidc/     Architecture, ADRs, roadmap, test scenarios, hosting PoC
 ```
