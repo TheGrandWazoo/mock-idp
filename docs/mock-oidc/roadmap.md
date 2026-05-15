@@ -11,6 +11,32 @@ the thinking was at the time.
 
 ---
 
+## v0.3 committed (in-flight design, will ship as v0.3)
+
+These items have an accepted ADR and a settled design. Implementation is next.
+
+### ✅ Provider plugin architecture
+
+Extract token claim building into a `providers/` module. `TenantRecord` gains a
+`provider` field (default: `entra_id`). Adding a new provider profile is an additive
+file plus a one-line registry entry — no changes to routing, keys, or config loading.
+
+See [ADR-002](../ADR-002-provider-plugin-architecture.md).
+
+### ✅ Entra ID rich authorization model
+
+Separates *service principals* (identities that request tokens) from *clients*
+(resource apps that receive them). Clients define what roles exist; grants assign
+those roles to specific users or service principals per resource. Token building
+resolves roles from the grant table rather than a flat list on the identity.
+
+Backward compatible: tenants without a `clients:` grants block continue to use flat
+roles as in v0.2.
+
+See [ADR-002](../ADR-002-provider-plugin-architecture.md).
+
+---
+
 ## Status legend
 
 - 🟢 **v0.3 candidate** — meaningful next step; build when a real test demands it
@@ -213,37 +239,14 @@ concurrent read-while-replacing.
 default so the operational behavior in production-ish environments stays
 predictable.
 
-### 🟢 Per-audience roles and groups
+### 🟢 Realm roles (Keycloak-influenced, optional)
 
-A user or client can present different roles and groups depending on which
-audience (service) they are authenticating against.
+Tenant-level role assignments for directory-scoped roles (e.g. `Global.Reader`)
+that appear in every token regardless of audience. Merged alongside resource-scoped
+grants from the clients block.
 
-**Why:** in real identity providers, role assignments are often scoped to a
-specific resource or application. Service B might grant a user `operator`
-access while Service C grants them `admin`. Flat per-identity role lists
-force test authors to create duplicate identities just to vary the claims.
-
-**Shape:**
-
-```yaml
-users:
-  alice:
-    password: alice-pw
-    roles: [operator]           # default — used when no audience match
-    groups: [platform-team]
-    audience_roles:
-      api://serviceB: [operator, responder]
-      api://serviceC: [admin]
-    audience_groups:
-      api://serviceC: [admin-team]
-```
-
-Resolution order: if the requested `aud` matches an `audience_roles` key,
-use that list; otherwise fall back to the top-level `roles`.
-
-**Effort:** ~30 LOC; extend `UserIdentity` and `ClientIdentity` models;
-update `user_claims` / `client_claims` to accept the resolved audience and
-pick the right role list.
+Deferred from v0.3 committed — no concrete test demand yet. When a use case arrives,
+the shape and merge logic are documented in ADR-002 §Decision.
 
 ### 🟢 Admin overrides include `iss` claim
 
@@ -386,6 +389,19 @@ fixture, fresh-start-per-restart is ideal.
 ---
 
 ## Resolved (formerly questions)
+
+- ✓ **Tenant-keyed config schema (v0.2)** — `tid` hoisted from individual identity
+  records to the grouping key. `users:` and `clients:` nest under
+  `tenants: {<tid>: {...}}`. Eliminates repeated `tid` on every record; enables
+  multi-tenant configs in a single file.
+- ✓ **Provider plugin architecture** — `providers/` module; dispatch by `provider:`
+  field on `TenantRecord` (default `entra_id`). Claim-shape emulation only, not full
+  flow emulation. See ADR-002.
+- ✓ **Entra ID rich grants model** — `service_principals:` for machine identities,
+  `clients:` for resource apps with `grants:` per identity. Flat roles remain as
+  backward-compatible fallback. See ADR-002.
+- ✓ **Feature gates are implicit** — presence of `clients:` grants block activates
+  grants model; no explicit `features:` flag. Simple config stays simple.
 
 These were once open questions; resolved during v0.2 design:
 
