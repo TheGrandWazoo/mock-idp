@@ -5,7 +5,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .. import config as _cfg
-from ..keys import get_alt_key, get_signing_key
+from ..keys import get_alt_key, get_jwks_keys, get_signing_key
 from ..providers import get_provider
 from ..tokens import (
     apply_overrides,
@@ -49,7 +49,7 @@ async def discovery(issuer: str, request: Request):
 async def jwks(issuer: str, request: Request):
     headers = {k.lower(): v for k, v in request.headers.items()}
     await apply_test_hooks(headers)
-    return {"keys": [get_signing_key().as_dict(is_private=False)]}
+    return {"keys": [k.as_dict(is_private=False) for k in get_jwks_keys()]}
 
 
 @router.post("/{issuer}/token")
