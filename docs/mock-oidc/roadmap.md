@@ -376,9 +376,12 @@ fixture, fresh-start-per-restart is ideal.
   resolve by original config name, not UUID alias. See ADR-002.
 - ✓ **Feature gates are implicit (v0.3)** — presence of `clients:` grants block activates
   grants model; no explicit `features:` flag. Simple config stays simple.
-- ✓ **Playground update (v0.4 candidate)** — audience dropdown from `client_apps`,
-  `service_principals` identity group, resolved-roles display per audience. Deferred
-  until debug endpoint shape stabilises post-v0.3.
+- ✓ **Playground update (v0.3.1)** — audience dropdown from `client_apps`,
+  `service_principals` identity group, resolved-roles display per audience.
+- ✓ **Playground testing overrides + sig verification (v0.3.2)** — collapsible
+  "Testing overrides" panel with `X-Test-Expired` checkbox and `X-Omit-Claims` text
+  input; both headers reflected in the generated curl snippet. Signature verification
+  badge (`✓`/`✗`) in the JWT card, resolved asynchronously via `POST /debug/decode`.
 
 These were once open questions; resolved during v0.2 design:
 
