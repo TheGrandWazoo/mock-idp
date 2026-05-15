@@ -83,7 +83,7 @@ def test_password_grant_happy_path(client):
     data = r.json()
     assert "access_token" in data
     payload = _decode_payload(data["access_token"])
-    assert payload["aud"] == "api://serviceB"
+    assert payload["aud"] == "01010101-1010-1010-1010-bbbbbbbbbbbb"
     assert payload["preferred_username"] == "alice@example.com"
     assert payload["ver"] == "2.0"
     assert "operator" in payload["roles"]
@@ -255,7 +255,7 @@ def test_aud_from_resource(client):
             "resource": "api://serviceB",
         },
     )
-    assert _decode_payload(r.json()["access_token"])["aud"] == "api://serviceB"
+    assert _decode_payload(r.json()["access_token"])["aud"] == "01010101-1010-1010-1010-bbbbbbbbbbbb"
 
 
 def test_aud_from_scope_default_suffix(client):
@@ -268,7 +268,25 @@ def test_aud_from_scope_default_suffix(client):
             "scope": "api://serviceB/.default",
         },
     )
-    assert _decode_payload(r.json()["access_token"])["aud"] == "api://serviceB"
+    assert _decode_payload(r.json()["access_token"])["aud"] == "01010101-1010-1010-1010-bbbbbbbbbbbb"
+
+
+def test_user_aud_resolves_to_app_id_uuid(client):
+    """User tokens carry the app_id UUID as aud; SP tokens carry the URI."""
+    user_r = client.post(
+        "/default/token",
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw",
+              "resource": "api://serviceB"},
+    )
+    sp_r = client.post(
+        "/default/token",
+        data={"grant_type": "client_credentials", "client_id": "service-a",
+              "client_secret": "serviceA-secret", "resource": "api://serviceB"},
+    )
+    user_aud = _decode_payload(user_r.json()["access_token"])["aud"]
+    sp_aud = _decode_payload(sp_r.json()["access_token"])["aud"]
+    assert user_aud == "01010101-1010-1010-1010-bbbbbbbbbbbb"  # app_id UUID
+    assert sp_aud == "api://serviceB"                          # URI unchanged
 
 
 def test_aud_resource_wins_over_scope(client):
@@ -282,7 +300,7 @@ def test_aud_resource_wins_over_scope(client):
             "scope": "api://serviceC/.default",
         },
     )
-    assert _decode_payload(r.json()["access_token"])["aud"] == "api://serviceB"
+    assert _decode_payload(r.json()["access_token"])["aud"] == "01010101-1010-1010-1010-bbbbbbbbbbbb"
 
 
 def test_aud_default_when_neither(client):
