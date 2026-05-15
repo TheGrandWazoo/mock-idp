@@ -19,6 +19,7 @@ def _load_config(path: Path) -> AppConfig:
 
 _config = _load_config(CONFIG_PATH)
 MODE: str = _config.auth_mode
+ISSUER_MODES: dict[str, str] = _config.issuer_modes
 # Env var takes precedence so the token can live in a Kubernetes Secret
 # without touching the ConfigMap.
 ADMIN_TOKEN: str = os.getenv("MOCK_IDP_ADMIN_TOKEN") or _config.admin_token

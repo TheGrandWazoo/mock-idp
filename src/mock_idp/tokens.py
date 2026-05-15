@@ -84,8 +84,14 @@ def resolve_roles(identity_key: str, identity: UserRecord | ServicePrincipalReco
     return list(identity.roles)
 
 
-def check_audience(identity_key: str, identity: UserRecord | ServicePrincipalRecord, aud: str) -> None:
-    if _cfg.MODE != "strict":
+def check_audience(
+    identity_key: str,
+    identity: UserRecord | ServicePrincipalRecord,
+    aud: str,
+    mode: Optional[str] = None,
+) -> None:
+    effective_mode = mode if mode in ("lax", "strict") else _cfg.MODE
+    if effective_mode != "strict":
         return
     if isinstance(identity, ServicePrincipalRecord) and identity.override_any_claim:
         return
