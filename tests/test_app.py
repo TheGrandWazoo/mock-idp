@@ -48,8 +48,22 @@ def test_jwks(client):
     r = client.get("/default/jwks")
     assert r.status_code == 200
     keys = r.json()["keys"]
-    assert len(keys) == 1
-    assert keys[0]["kty"] == "RSA"
+    assert len(keys) == 3
+    assert all(k["kty"] == "RSA" for k in keys)
+
+
+def test_jwks_active_kid_matches_token(client):
+    """The kid in the issued token must match the first key in /jwks."""
+    token_r = client.post(
+        "/default/token",
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw",
+              "resource": "api://serviceB"},
+    )
+    token = token_r.json()["access_token"]
+    header = json.loads(b64urlDecode_str(token.split(".")[0]))
+    jwks_kids = [k["kid"] for k in client.get("/default/jwks").json()["keys"]]
+    assert header["kid"] == jwks_kids[0]
+    assert header["kid"] not in jwks_kids[1:]
 
 
 # ── Password grant ─────────────────────────────────────────────────────────
@@ -632,3 +646,8 @@ def _decode_payload(token: str) -> dict:
     part = token.split(".")[1]
     part += "=" * (-len(part) % 4)
     return json.loads(base64.urlsafe_b64decode(part))
+
+
+def b64urlDecode_str(s: str) -> str:
+    s += "=" * (-len(s) % 4)
+    return base64.urlsafe_b64decode(s).decode()
