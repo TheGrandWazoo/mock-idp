@@ -161,6 +161,27 @@
       padding: 0.35rem 0.75rem;
       font-size: 0.85rem;
     }
+    .sig-ok {
+      display: inline-block;
+      background: var(--ok-bg);
+      border: 1px solid var(--ok-border);
+      color: var(--ok-fg);
+      border-radius: 4px;
+      padding: 0.2rem 0.6rem;
+      font-size: 0.82rem;
+      font-weight: 500;
+    }
+    .sig-fail {
+      display: inline-block;
+      background: var(--error-bg);
+      border: 1px solid var(--error-border);
+      color: var(--error-fg);
+      border-radius: 4px;
+      padding: 0.2rem 0.6rem;
+      font-size: 0.82rem;
+      font-weight: 500;
+    }
+    input[type="checkbox"] { width: auto; margin-right: 0.3rem; cursor: pointer; }
     details.card > summary {
       cursor: pointer;
       user-select: none;
@@ -237,6 +258,23 @@
       <!-- Populated dynamically when a known client app is selected -->
     </div>
 
+    <details class="card">
+      <summary>Testing overrides</summary>
+      <div class="row" style="margin-top:0.75rem">
+        <div class="field" style="flex:0 0 auto;min-width:180px">
+          <label style="display:flex;align-items:center;cursor:pointer">
+            <input type="checkbox" id="test-expired"> X-Test-Expired
+          </label>
+          <div class="hint">Issues an already-expired token</div>
+        </div>
+        <div class="field">
+          <label for="test-omit">X-Omit-Claims</label>
+          <input type="text" id="test-omit" placeholder="oid,tid" spellcheck="false">
+          <div class="hint">Comma-separated claim names to drop from the token</div>
+        </div>
+      </div>
+    </details>
+
     <div class="card">
       <div class="toolbar">
         <button id="submit">Issue Token</button>
@@ -252,6 +290,7 @@
         <pre id="jwt"></pre>
         <div class="output-row">
           <span class="hint">Raw token — paste anywhere</span>
+          <span id="sig-badge"></span>
           <button class="secondary" data-copy="jwt">Copy</button>
         </div>
       </div>
@@ -556,7 +595,16 @@
       let curlHeaderArg = '';
       if (shape) {
         headers['X-Token-Shape'] = shape;
-        curlHeaderArg = ` \\\n  -H "X-Token-Shape: ${shape}"`;
+        curlHeaderArg += ` \\\n  -H "X-Token-Shape: ${shape}"`;
+      }
+      if ($('test-expired')?.checked) {
+        headers['X-Test-Expired'] = '1';
+        curlHeaderArg += ` \\\n  -H "X-Test-Expired: 1"`;
+      }
+      const omitClaims = $('test-omit')?.value?.trim();
+      if (omitClaims) {
+        headers['X-Omit-Claims'] = omitClaims;
+        curlHeaderArg += ` \\\n  -H "X-Omit-Claims: ${omitClaims}"`;
       }
 
       statusEl.textContent = 'Issuing…';
@@ -573,6 +621,20 @@
         }
         const jwt = data.access_token;
         const decoded = decodeJwt(jwt);
+
+        $('sig-badge').textContent = '';
+        $('sig-badge').className = '';
+        fetch('/debug/decode', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({token: jwt}),
+        }).then(r => r.ok ? r.json() : null).then(dec => {
+          if (!dec) return;
+          const badge = $('sig-badge');
+          const valid = dec.signature_validated_against_published_key;
+          badge.className = valid ? 'sig-ok' : 'sig-fail';
+          badge.textContent = valid ? '✓ Signature valid' : '✗ Signature invalid';
+        }).catch(() => {});
 
         $('jwt').textContent = jwt;
         $('header').textContent = JSON.stringify(decoded.header, null, 2);
