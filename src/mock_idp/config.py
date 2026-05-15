@@ -23,16 +23,24 @@ MODE: str = _config.auth_mode
 # without touching the ConfigMap.
 ADMIN_TOKEN: str = os.getenv("MOCK_IDP_ADMIN_TOKEN") or _config.admin_token
 CORS_ORIGINS: list[str] = _config.cors_allow_origins
-USERS: dict[str, UserRecord] = _config.users
 
+USERS: dict[str, UserRecord] = {}
 CLIENTS: dict[str, ClientRecord] = {}
-for _key, _rec in _config.clients.items():
-    _canonical = _rec.client_id or _key
-    _rec._canonical_id = _canonical
-    CLIENTS[_key] = _rec
-    if _canonical != _key:
-        CLIENTS[_canonical] = _rec
+_raw_client_keys: set[str] = set()
+
+for _tid, _tenant in _config.tenants.items():
+    for _username, _user in _tenant.users.items():
+        _user.tid = _tid
+        USERS[_username] = _user
+    for _key, _rec in _tenant.clients.items():
+        _rec.tid = _tid
+        _canonical = _rec.client_id or _key
+        _rec._canonical_id = _canonical
+        CLIENTS[_key] = _rec
+        _raw_client_keys.add(_key)
+        if _canonical != _key:
+            CLIENTS[_canonical] = _rec
 
 _clients_raw: dict[str, ClientRecord] = {
-    k: v for k, v in CLIENTS.items() if k in _config.clients
+    k: v for k, v in CLIENTS.items() if k in _raw_client_keys
 }
