@@ -1,4 +1,8 @@
 import asyncio
+import base64
+import hashlib
+import hmac as _hmac
+import json as _json
 from typing import Optional
 
 from authlib.jose import JsonWebKey, jwt
@@ -152,6 +156,30 @@ def omit(claims: dict, header_value: Optional[str]) -> None:
     for name in (header_value or "").split(","):
         if name := name.strip():
             claims.pop(name, None)
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def make_unsigned_token(claims: dict) -> str:
+    """JWT with alg:none and an empty signature — validators must reject this."""
+    header = _b64url(_json.dumps({"alg": "none", "typ": "JWT"}).encode())
+    payload = _b64url(_json.dumps(claims).encode())
+    return f"{header}.{payload}."
+
+
+def make_wrong_alg_token(claims: dict, public_key_pem: bytes) -> str:
+    """HS256-signed JWT using the RSA public key PEM as the HMAC secret.
+
+    Classic algorithm-confusion attack: a validator that trusts the alg header
+    and accepts HS256 will verify this successfully using the published public key.
+    """
+    header = _b64url(_json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    payload = _b64url(_json.dumps(claims).encode())
+    signing_input = f"{header}.{payload}".encode()
+    sig = _hmac.new(public_key_pem, signing_input, hashlib.sha256).digest()
+    return f"{header}.{payload}.{_b64url(sig)}"
 
 
 async def apply_test_hooks(headers: dict) -> None:

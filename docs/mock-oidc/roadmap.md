@@ -3,7 +3,7 @@
 What's not yet shipped, what's worth doing next, and what's parked unless a
 specific need surfaces.
 
-Current release is **v0.3.2**. The v0.3 surface is documented in ADR-002 and
+Current release is **v0.3.7**. The v0.3 surface is documented in ADR-002 and
 the commit history. This file exists so design conversations stay grounded —
 if someone says "we should add X", you can check whether X is already on the
 list and what the thinking was at the time.
@@ -99,48 +99,6 @@ useful for testing revocation scenarios.
 
 **Effort:** ~30 LOC + tests.
 
-### 🟢 Algorithm-failure negative endpoints
-
-Two endpoints for security-test paths:
-
-```text
-POST /{issuer}/token/unsigned          Returns a JWT with alg: "none"
-POST /{issuer}/token/wrong-alg         Returns a JWT signed HS256 with
-                                       the RSA public key as secret
-```
-
-**Why:** confirm the gateway rejects both. These are real-world
-JWT-validator attacks; a mock that can produce them lets you
-regression-test the defense.
-
-**Effort:** ~40 LOC + tests.
-
-### 🟢 Multi-key JWKS
-
-`/jwks` returns 2–3 keys. The current signing key is one; the other
-1–2 are dummy keys with distinct `kid`s.
-
-**Why:** test the gateway's "pick the right key by `kid`" path. Currently
-JWKS has one key; the gateway can't fail the lookup if there's only one
-option.
-
-**Effort:** ~20 LOC + tests.
-
-### 🟢 Slow / failing endpoints
-
-Test override headers:
-
-```text
-X-Test-Delay-Ms: 5000      Adds 5s sleep before response
-X-Test-Fail: 1             Returns 500 instead of token / JWKS
-```
-
-**Why:** test the gateway's timeout and retry behavior against the OIDC
-provider. JWKS-fetch and discovery-fetch timeouts are real concerns in
-production.
-
-**Effort:** ~15 LOC + tests.
-
 ### 🟢 Per-issuer signing keys
 
 Each issuer path gets its own keypair. Currently all issuers share one
@@ -153,20 +111,6 @@ if they have the same `kid`.
 
 **Effort:** ~25 LOC; change signing key from module-level to a
 per-issuer dict; update `/jwks` and signing helpers.
-
-### 🟢 Per-issuer `auth_mode`
-
-Override the global `auth_mode` per issuer. Lets one mock serve both
-lax and strict tests via different paths.
-
-```yaml
-issuers:
-  default: { auth_mode: lax }
-  strict-tenant: { auth_mode: strict }
-```
-
-**Effort:** ~20 LOC; config schema addition; resolve mode per-request
-by issuer path.
 
 ### 🟢 Webhook on token issuance
 
@@ -220,19 +164,6 @@ grants from the clients block.
 
 Deferred from v0.3 committed — no concrete test demand yet. When a use case arrives,
 the shape and merge logic are documented in ADR-002 §Decision.
-
-### 🟢 Admin overrides include `iss` claim
-
-Currently admin can override almost any claim, but `iss` was
-intentionally NOT overridable to prevent accidental footguns. For
-serious negative testing of the gateway's issuer validation, allowing it
-would be useful.
-
-**Resolution path:** gate the `iss` override behind a stronger flag
-(`override_iss_too: true` on the admin client) so it's an explicit
-opt-in.
-
-**Effort:** ~5 LOC.
 
 ---
 
@@ -382,6 +313,21 @@ fixture, fresh-start-per-restart is ideal.
   "Testing overrides" panel with `X-Test-Expired` checkbox and `X-Omit-Claims` text
   input; both headers reflected in the generated curl snippet. Signature verification
   badge (`✓`/`✗`) in the JWT card, resolved asynchronously via `POST /debug/decode`.
+- ✓ **Admin `iss` override (v0.3.3)** — `override_iss_too: true` flag on an admin SP
+  unlocks overriding the `iss` claim via form body. Gated separately from `override_any_claim`
+  to prevent accidental footguns.
+- ✓ **Slow / failing endpoints (v0.3.4)** — `X-Test-Delay-Ms` sleeps before responding;
+  `X-Test-Fail` returns 500. Honored on `/token`, `/jwks`, and `/discovery`. Lets tests
+  exercise gateway timeout and retry behavior.
+- ✓ **Multi-key JWKS (v0.3.5)** — `/jwks` returns 3 keys: 1 active signing key (`mock-py-1`)
+  + 2 decoys (`mock-py-d1`, `mock-py-d2`). Tests gateway kid-based key selection.
+- ✓ **Per-issuer `auth_mode` (v0.3.6)** — `issuer_modes: {slug: lax|strict}` in config
+  overrides global `auth_mode` per issuer path. One mock can serve both lax and strict
+  test scenarios.
+- ✓ **Algorithm-failure negative endpoints (v0.3.7)** — two new POST endpoints:
+  `/{issuer}/token/unsigned` (alg:none, empty signature) and `/{issuer}/token/wrong-alg`
+  (HS256-signed with the RSA public key as HMAC secret). Auth and audience checks still
+  enforced; only the signing is adversarial. Playground exposes both as a token variant.
 
 These were once open questions; resolved during v0.2 design:
 

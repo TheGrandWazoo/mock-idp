@@ -1,6 +1,6 @@
 # Test Scenarios — Python Mock OIDC
 
-Concrete request/response patterns for the v0.2 surface area. Use these
+Concrete request/response patterns for the v0.3.7 surface area. Use these
 as the basis for a regression suite, ad-hoc curl tests, or gateway
 integration tests.
 
@@ -541,6 +541,148 @@ wants to inspect a token without writing curl by hand.
 
 ---
 
+## Algorithm-failure negative endpoints (v0.3.7)
+
+These endpoints enforce auth and audience checks normally, then issue an adversarially
+crafted token. Use them to confirm the gateway's JWT validator rejects each attack.
+
+### S46 — Unsigned token (alg:none)
+
+```bash
+curl -X POST http://mock-idp.example.com/default/token/unsigned \
+  -d "grant_type=client_credentials&client_id=service-a" \
+  -d "client_secret=serviceA-secret&resource=api://serviceB"
+```
+
+Returns a token with header `{"alg": "none", "typ": "JWT"}` and an empty signature.
+Any conformant validator must reject `alg: none` tokens (per RFC 7518 §3.6 and the
+algorithm confusion attack documented in CVE-2015-9235).
+
+→ Gateway should return 401.
+
+### S47 — Wrong-algorithm token (HS256 with RSA public key)
+
+```bash
+curl -X POST http://mock-idp.example.com/default/token/wrong-alg \
+  -d "grant_type=client_credentials&client_id=service-a" \
+  -d "client_secret=serviceA-secret&resource=api://serviceB"
+```
+
+Returns a token with header `{"alg": "HS256"}` signed using the RSA **public** key PEM
+as the HMAC secret. A naïve validator that trusts the `alg` header and accepts `HS256`
+will verify this successfully — that is the algorithm-confusion attack. A correctly
+configured validator locks the allowed algorithms to RS256 and rejects this token.
+
+→ Gateway should return 401.
+
+---
+
+## Slow / failing endpoints (v0.3.4)
+
+### S48 — Simulated delay
+
+```bash
+curl -X POST http://mock-idp.example.com/default/token \
+  -H "X-Test-Delay-Ms: 5000" \
+  -d "grant_type=client_credentials&..."
+```
+
+Server sleeps 5 s before responding. Also honored on `GET /jwks` and
+`GET /.well-known/openid-configuration`. Use to test gateway timeout and retry behavior.
+
+### S49 — Forced server error
+
+```bash
+curl -X POST http://mock-idp.example.com/default/token \
+  -H "X-Test-Fail: 1" \
+  -d "..."
+```
+
+Returns `500 {"error": "server_error"}`. Honored on `/token`, `/jwks`, and discovery.
+Use to test gateway circuit-breaker and error-handling paths.
+
+---
+
+## Multi-key JWKS (v0.3.5)
+
+### S50 — JWKS returns three keys
+
+```bash
+curl http://mock-idp.example.com/default/jwks | jq '.keys | length'
+```
+
+Returns `3`. One active signing key (`kid: mock-py-1`) followed by two decoys
+(`mock-py-d1`, `mock-py-d2`). A gateway that selects by `kid` will correctly use only
+the active key; a gateway that blindly tries every key may accept tokens signed by any
+of them.
+
+---
+
+## Per-issuer auth_mode (v0.3.6)
+
+### S51 — Strict issuer rejects unlisted audience while global mode is lax
+
+Config:
+
+```yaml
+auth_mode: lax
+issuer_modes:
+  strict-tenant: strict
+```
+
+```bash
+curl -X POST http://mock-idp.example.com/strict-tenant/token \
+  -d "grant_type=password&username=alice&password=alice-pw&resource=api://unlisted"
+```
+
+→ 400 `invalid_target` — `strict-tenant` issuer path applies strict gating even though
+the global mode is lax.
+
+### S52 — Lax issuer allows any audience while global mode is strict
+
+Config:
+
+```yaml
+auth_mode: strict
+issuer_modes:
+  open-tenant: lax
+```
+
+```bash
+curl -X POST http://mock-idp.example.com/open-tenant/token \
+  -d "grant_type=password&username=alice&password=alice-pw&resource=api://anywhere"
+```
+
+→ 200 — `open-tenant` overrides to lax.
+
+---
+
+## Admin iss override (v0.3.3)
+
+### S53 — Override `iss` with flag enabled
+
+Config has an admin SP with both `override_any_claim: true` and `override_iss_too: true`.
+
+```bash
+curl -X POST http://mock-idp.example.com/default/token \
+  -d "grant_type=client_credentials" \
+  -d "client_id=00000000-0000-0000-0000-000000000000" \
+  -d "client_secret=admin-secret" \
+  -d "resource=api://anywhere" \
+  -d "iss=https://evil.example.com/fake-issuer"
+```
+
+Token has `iss: "https://evil.example.com/fake-issuer"`. The gateway's issuer
+validation should reject a token whose `iss` does not match the configured OIDC issuer.
+
+### S54 — `iss` override blocked without flag
+
+Same admin SP but `override_iss_too` is absent or false.
+
+Same request as S53 → Token has the normal `iss` (override silently ignored).
+
+---
+
 ## CORS preflight
 
 ### S45 — Preflight from a browser-based test client
@@ -583,6 +725,11 @@ If you see preflight failures in browser dev tools, check
 | Debug endpoints | S40–S43 |
 | Token playground | S44 |
 | CORS preflight | S45 |
+| Algorithm-failure endpoints | S46–S47 |
+| Slow / failing endpoints | S48–S49 |
+| Multi-key JWKS | S50 |
+| Per-issuer auth_mode | S51–S52 |
+| Admin iss override | S53–S54 |
 
-That is the full v0.2 surface area. Anything not covered here is either
-a v0.3 roadmap item (Token Exchange, introspection, etc.) or out of scope.
+That is the full v0.3.7 surface area. Anything not covered here is either
+a v0.4 roadmap item (token introspection, token exchange, config hot-reload, etc.) or out of scope.

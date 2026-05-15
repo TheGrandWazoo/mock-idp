@@ -580,6 +580,38 @@ def test_malformed_endpoint(client):
     assert len(token.split(".")) == 3
 
 
+def test_unsigned_endpoint(client):
+    r = client.post(
+        "/default/token/unsigned",
+        data={"grant_type": "client_credentials", "client_id": "service-a",
+              "client_secret": "serviceA-secret", "resource": "api://serviceB"},
+    )
+    assert r.status_code == 200
+    token = r.json()["access_token"]
+    parts = token.split(".")
+    assert len(parts) == 3
+    assert parts[2] == ""  # empty signature
+    header = json.loads(b64urlDecode_str(parts[0]))
+    assert header["alg"] == "none"
+
+
+def test_wrong_alg_endpoint(client):
+    r = client.post(
+        "/default/token/wrong-alg",
+        data={"grant_type": "client_credentials", "client_id": "service-a",
+              "client_secret": "serviceA-secret", "resource": "api://serviceB"},
+    )
+    assert r.status_code == 200
+    token = r.json()["access_token"]
+    parts = token.split(".")
+    assert len(parts) == 3
+    assert parts[2] != ""  # has a signature (just the wrong kind)
+    header = json.loads(b64urlDecode_str(parts[0]))
+    assert header["alg"] == "HS256"
+    # kid must not appear — no kid means a gateway can't use kid-based RS256 verification
+    assert "kid" not in header
+
+
 # ── Multi-issuer ───────────────────────────────────────────────────────────
 
 

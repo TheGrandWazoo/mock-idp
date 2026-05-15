@@ -181,6 +181,16 @@
       font-size: 0.82rem;
       font-weight: 500;
     }
+    .sec-warn {
+      display: inline-block;
+      background: var(--warn-bg);
+      border: 1px solid var(--warn-border);
+      color: var(--warn-fg);
+      border-radius: 4px;
+      padding: 0.2rem 0.6rem;
+      font-size: 0.82rem;
+      font-weight: 500;
+    }
     input[type="checkbox"] { width: auto; margin-right: 0.3rem; cursor: pointer; }
     details.card > summary {
       cursor: pointer;
@@ -250,6 +260,16 @@
             <option value="v1">v1</option>
             <option value="v2">v2</option>
           </select>
+        </div>
+        <div class="field">
+          <label for="variant">Token variant</label>
+          <select id="variant">
+            <option value="">Standard</option>
+            <option value="wrong-sig">wrong-sig — unpublished key</option>
+            <option value="unsigned">unsigned — alg:none</option>
+            <option value="wrong-alg">wrong-alg — HS256 confusion</option>
+          </select>
+          <div class="hint" id="variant-hint">&nbsp;</div>
         </div>
       </div>
     </div>
@@ -559,6 +579,22 @@
       updateIdentityHint();
     }
 
+    const variantHints = {
+      '': '',
+      'wrong-sig': 'Token signed by unpublished key — gateway should reject (kid not in JWKS)',
+      'unsigned': 'alg:none, empty signature — gateway must reject per RFC 7518',
+      'wrong-alg': 'HS256 signed with RSA public key — algorithm-confusion attack; gateway must reject',
+    };
+    $('variant').addEventListener('change', () => {
+      const h = variantHints[$('variant').value] || '';
+      const el = $('variant-hint');
+      if (h) {
+        el.innerHTML = `<span class="sec-warn">⚠ ${h}</span>`;
+      } else {
+        el.innerHTML = '&nbsp;';
+      }
+    });
+
     identitySel.addEventListener('change', updateIdentityHint);
     credentialInput.addEventListener('change', () => {
       const sel = selectedIdentity();
@@ -627,10 +663,12 @@
         curlHeaderArg += ` \\\n  -H "X-Test-Fail: 1"`;
       }
 
+      const variant = $('variant').value;
+      const tokenPath = variant ? `token/${variant}` : 'token';
       statusEl.textContent = 'Issuing…';
       submitBtn.disabled = true;
       try {
-        const r = await fetch(`/${encodeURIComponent(issuer)}/token`, {
+        const r = await fetch(`/${encodeURIComponent(issuer)}/${tokenPath}`, {
           method: 'POST', headers, body,
         });
         const data = await r.json();
@@ -661,7 +699,7 @@
         $('payload').textContent = JSON.stringify(decoded.payload, null, 2);
         $('auth-header').textContent = `Authorization: Bearer ${jwt}`;
         $('curl').textContent =
-          `curl -X POST ${location.origin}/${encodeURIComponent(issuer)}/token` +
+          `curl -X POST ${location.origin}/${encodeURIComponent(issuer)}/${tokenPath}` +
           curlHeaderArg +
           ` \\\n  -d "${curlBody}"`;
         $('raw-response').textContent = JSON.stringify(data, null, 2);
