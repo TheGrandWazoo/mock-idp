@@ -1,3 +1,4 @@
+import asyncio
 from typing import Optional
 
 from authlib.jose import JsonWebKey, jwt
@@ -131,6 +132,18 @@ def omit(claims: dict, header_value: Optional[str]) -> None:
     for name in (header_value or "").split(","):
         if name := name.strip():
             claims.pop(name, None)
+
+
+async def apply_test_hooks(headers: dict) -> None:
+    """Honor X-Test-Delay-Ms and X-Test-Fail request headers."""
+    delay_ms = headers.get("x-test-delay-ms")
+    if delay_ms:
+        try:
+            await asyncio.sleep(max(0, int(delay_ms)) / 1000)
+        except (ValueError, TypeError):
+            pass
+    if headers.get("x-test-fail"):
+        raise HTTPException(500, {"error": "server_error", "error_description": "X-Test-Fail triggered"})
 
 
 def redact(d: object) -> object:

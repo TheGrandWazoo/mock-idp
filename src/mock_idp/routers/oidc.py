@@ -9,6 +9,7 @@ from ..keys import get_alt_key, get_signing_key
 from ..providers import get_provider
 from ..tokens import (
     apply_overrides,
+    apply_test_hooks,
     check_audience,
     omit,
     resolve_aud,
@@ -27,7 +28,9 @@ async def healthz():
 
 
 @router.get("/{issuer}/.well-known/openid-configuration")
-async def discovery(issuer: str):
+async def discovery(issuer: str, request: Request):
+    headers = {k.lower(): v for k, v in request.headers.items()}
+    await apply_test_hooks(headers)
     base = f"{_cfg.ISS_BASE}/{issuer}"
     return {
         "issuer": base,
@@ -43,7 +46,9 @@ async def discovery(issuer: str):
 
 
 @router.get("/{issuer}/jwks")
-async def jwks(issuer: str):
+async def jwks(issuer: str, request: Request):
+    headers = {k.lower(): v for k, v in request.headers.items()}
+    await apply_test_hooks(headers)
     return {"keys": [get_signing_key().as_dict(is_private=False)]}
 
 
@@ -51,6 +56,7 @@ async def jwks(issuer: str):
 async def token(issuer: str, request: Request):
     form = dict(await request.form())
     headers = {k.lower(): v for k, v in request.headers.items()}
+    await apply_test_hooks(headers)
     grant_type = form.get("grant_type")
     aud = resolve_aud(form)
     provider = get_provider("entra_id")

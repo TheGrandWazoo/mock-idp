@@ -427,6 +427,39 @@ def test_x_test_expired(client):
     assert payload["exp"] < int(time.time())
 
 
+def test_x_test_fail_token(client):
+    r = client.post(
+        "/default/token",
+        headers={"X-Test-Fail": "1"},
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw"},
+    )
+    assert r.status_code == 500
+
+
+def test_x_test_fail_jwks(client):
+    r = client.get("/default/jwks", headers={"X-Test-Fail": "1"})
+    assert r.status_code == 500
+
+
+def test_x_test_fail_discovery(client):
+    r = client.get("/default/.well-known/openid-configuration", headers={"X-Test-Fail": "1"})
+    assert r.status_code == 500
+
+
+def test_x_test_delay_ms(client):
+    import time
+    start = time.monotonic()
+    r = client.post(
+        "/default/token",
+        headers={"X-Test-Delay-Ms": "200"},
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw",
+              "resource": "api://serviceB"},
+    )
+    elapsed_ms = (time.monotonic() - start) * 1000
+    assert r.status_code == 200
+    assert elapsed_ms >= 200
+
+
 def test_x_omit_claims(client):
     r = client.post(
         "/default/token",
