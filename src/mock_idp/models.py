@@ -11,7 +11,7 @@ class UserRecord(BaseModel):
     tid: str = ""  # injected from tenant key at load time
     token_version: str = "v2"
     token_lifetime_seconds: int = 3600
-    roles: list[str] = []
+    roles: list[str] = []  # fallback when no client-app grants are configured
     groups: list[str] = []
     allowed_audiences: list[str] = []
     extra_claims: dict[str, Any] = {}
@@ -24,7 +24,9 @@ class UserRecord(BaseModel):
         return v
 
 
-class ClientRecord(BaseModel):
+class ServicePrincipalRecord(BaseModel):
+    """Machine identity that requests tokens (client_credentials grant)."""
+
     model_config = ConfigDict(populate_by_name=True)
 
     client_id: Optional[str] = None
@@ -32,13 +34,14 @@ class ClientRecord(BaseModel):
     label: Optional[str] = None
     token_version: str = "v1"
     token_lifetime_seconds: int = 3600
-    roles: list[str] = []
+    roles: list[str] = []  # fallback when no client-app grants are configured
     groups: list[str] = []
     tid: str = ""  # injected from tenant key at load time
     allowed_audiences: list[str] = []
     extra_claims: dict[str, Any] = {}
     override_any_claim: bool = False
     _canonical_id: str = PrivateAttr(default="")
+    _name: str = PrivateAttr(default="")  # original key in service_principals; used for grants lookup
 
     @field_validator("token_version")
     @classmethod
@@ -48,9 +51,20 @@ class ClientRecord(BaseModel):
         return v
 
 
+class ClientAppRecord(BaseModel):
+    """Resource application — defines available roles and per-identity grants."""
+
+    app_id: Optional[str] = None
+    label: Optional[str] = None
+    roles: list[str] = []
+    grants: dict[str, list[str]] = {}
+
+
 class TenantRecord(BaseModel):
+    provider: str = "entra_id"
     users: dict[str, UserRecord] = {}
-    clients: dict[str, ClientRecord] = {}
+    service_principals: dict[str, ServicePrincipalRecord] = {}
+    clients: dict[str, ClientAppRecord] = {}  # resource apps keyed by audience URI
 
 
 class AppConfig(BaseModel):
