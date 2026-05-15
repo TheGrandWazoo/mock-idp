@@ -16,6 +16,11 @@ class UserRecord(BaseModel):
     allowed_audiences: list[str] = []
     extra_claims: dict[str, Any] = {}
 
+    @field_validator("password", mode="before")
+    @classmethod
+    def _coerce_password(cls, v: object) -> str:
+        return str(v)
+
     @field_validator("token_version")
     @classmethod
     def _valid_version(cls, v: str) -> str:
@@ -43,6 +48,11 @@ class ServicePrincipalRecord(BaseModel):
     override_iss_too: bool = False  # explicit second flag required to override iss
     _canonical_id: str = PrivateAttr(default="")
     _name: str = PrivateAttr(default="")  # original key in service_principals; used for grants lookup
+
+    @field_validator("secret", mode="before")
+    @classmethod
+    def _coerce_secret(cls, v: object) -> str:
+        return str(v)
 
     @field_validator("token_version")
     @classmethod
