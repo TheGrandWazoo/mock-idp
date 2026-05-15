@@ -41,6 +41,20 @@ def resolve_aud(form: dict) -> str:
     return "api://default"
 
 
+def resolve_user_aud(aud: str) -> str:
+    """Return the app_id UUID for user tokens when the client app defines one.
+
+    Entra ID sets aud to the bare UUID (app_id) for user tokens and to the
+    Application ID URI (api://...) for service-principal tokens. If no
+    ClientAppRecord exists for this audience, or it has no app_id, return
+    the URI unchanged so behaviour stays backward-compatible.
+    """
+    app = _cfg.CLIENT_APPS.get(aud)
+    if app and app.app_id:
+        return app.app_id
+    return aud
+
+
 def resolve_expiry(default: int, headers: dict) -> int:
     if headers.get("x-test-expired"):
         return -60

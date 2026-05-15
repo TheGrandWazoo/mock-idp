@@ -16,6 +16,7 @@ from ..tokens import (
     resolve_expiry,
     resolve_roles,
     resolve_shape,
+    resolve_user_aud,
     sign,
 )
 
@@ -70,7 +71,8 @@ async def token(issuer: str, request: Request):
         shape = resolve_shape(user.token_version, form, headers.get("x-token-shape"))
         expires_in = resolve_expiry(user.token_lifetime_seconds, headers)
         roles = resolve_roles(user_key, user, aud)
-        claims = provider.user_claims(issuer, user, aud, shape, expires_in, roles, form.get("client_id"))
+        token_aud = resolve_user_aud(aud)  # UUID for user tokens; URI unchanged for SPs
+        claims = provider.user_claims(issuer, user, token_aud, shape, expires_in, roles, form.get("client_id"))
 
     elif grant_type == "client_credentials":
         sp_key = form.get("client_id") or ""
