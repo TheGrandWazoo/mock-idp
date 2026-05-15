@@ -3,7 +3,7 @@
 What's not yet shipped, what's worth doing next, and what's parked unless a
 specific need surfaces.
 
-Current release is **v0.3.0**. The v0.3 surface is documented in ADR-002 and
+Current release is **v0.3.2**. The v0.3 surface is documented in ADR-002 and
 the commit history. This file exists so design conversations stay grounded —
 if someone says "we should add X", you can check whether X is already on the
 list and what the thinking was at the time.
