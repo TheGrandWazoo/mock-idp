@@ -272,6 +272,17 @@
           <input type="text" id="test-omit" placeholder="oid,tid" spellcheck="false">
           <div class="hint">Comma-separated claim names to drop from the token</div>
         </div>
+        <div class="field" style="flex:0 0 160px">
+          <label for="test-delay">X-Test-Delay-Ms</label>
+          <input type="number" id="test-delay" placeholder="0" min="0" max="30000">
+          <div class="hint">Delay response by N ms</div>
+        </div>
+        <div class="field" style="flex:0 0 auto;min-width:180px">
+          <label style="display:flex;align-items:center;cursor:pointer">
+            <input type="checkbox" id="test-fail"> X-Test-Fail
+          </label>
+          <div class="hint">Returns HTTP 500 instead of a token</div>
+        </div>
       </div>
     </details>
 
@@ -605,6 +616,15 @@
       if (omitClaims) {
         headers['X-Omit-Claims'] = omitClaims;
         curlHeaderArg += ` \\\n  -H "X-Omit-Claims: ${omitClaims}"`;
+      }
+      const delayMs = $('test-delay')?.value?.trim();
+      if (delayMs && delayMs !== '0') {
+        headers['X-Test-Delay-Ms'] = delayMs;
+        curlHeaderArg += ` \\\n  -H "X-Test-Delay-Ms: ${delayMs}"`;
+      }
+      if ($('test-fail')?.checked) {
+        headers['X-Test-Fail'] = '1';
+        curlHeaderArg += ` \\\n  -H "X-Test-Fail: 1"`;
       }
 
       statusEl.textContent = 'Issuing…';
