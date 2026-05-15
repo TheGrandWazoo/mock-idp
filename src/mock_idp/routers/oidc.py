@@ -77,7 +77,7 @@ async def token(issuer: str, request: Request):
         roles = resolve_roles(sp_key, sp, aud)
         claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, expires_in, roles)
         if sp.override_any_claim:
-            apply_overrides(claims, form)
+            apply_overrides(claims, form, allow_iss=sp.override_iss_too)
 
     else:
         raise HTTPException(400, "unsupported_grant_type")

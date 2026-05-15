@@ -366,6 +366,48 @@ def test_admin_override_injects_custom_claims(client):
     assert payload["custom_claim"] == "custom-value"
 
 
+def test_admin_iss_override_blocked_without_flag(client):
+    """iss cannot be overridden unless override_iss_too is also set."""
+    r = client.post(
+        "/default/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": "00000000-0000-0000-0000-000000000000",
+            "client_secret": "admin-secret",
+            "resource": "api://anywhere",
+            "iss": "https://evil.example.com",
+        },
+    )
+    assert r.status_code == 200
+    payload = _decode_payload(r.json()["access_token"])
+    assert payload["iss"] != "https://evil.example.com"
+
+
+def test_admin_iss_override_allowed_with_flag(client):
+    """iss can be overridden when override_iss_too is True."""
+    import mock_idp.config as m
+
+    admin_sp = m.SERVICE_PRINCIPALS["00000000-0000-0000-0000-000000000000"]
+    original = admin_sp.override_iss_too
+    admin_sp.override_iss_too = True
+    try:
+        r = client.post(
+            "/default/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": "00000000-0000-0000-0000-000000000000",
+                "client_secret": "admin-secret",
+                "resource": "api://anywhere",
+                "iss": "https://evil.example.com",
+            },
+        )
+        assert r.status_code == 200
+        payload = _decode_payload(r.json()["access_token"])
+        assert payload["iss"] == "https://evil.example.com"
+    finally:
+        admin_sp.override_iss_too = original
+
+
 # ── Test override headers ──────────────────────────────────────────────────
 
 
