@@ -5,12 +5,14 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .. import config as _cfg
-from ..keys import get_alt_key, get_jwks_keys, get_signing_key
+from ..keys import get_alt_key, get_jwks_keys, get_signing_key, get_signing_public_key_pem
 from ..providers import get_provider
 from ..tokens import (
     apply_overrides,
     apply_test_hooks,
     check_audience,
+    make_unsigned_token,
+    make_wrong_alg_token,
     omit,
     resolve_aud,
     resolve_expiry,
@@ -130,6 +132,76 @@ async def token_wrong_sig(issuer: str, request: Request):
 
     return {
         "access_token": sign(claims, get_alt_key()),
+        "token_type": "Bearer",
+        "expires_in": 3600,
+    }
+
+
+@router.post("/{issuer}/token/unsigned")
+async def token_unsigned(issuer: str, request: Request):
+    """Auth enforced; token issued with alg:none and no signature."""
+    form = dict(await request.form())
+    headers = {k.lower(): v for k, v in request.headers.items()}
+    aud = resolve_aud(form)
+    provider = get_provider("entra_id")
+    effective_mode = _cfg.ISSUER_MODES.get(issuer) or _cfg.MODE
+
+    if form.get("grant_type") == "password":
+        user_key = form.get("username") or ""
+        user = _cfg.USERS.get(user_key)
+        if not user or user.password != form.get("password"):
+            raise HTTPException(401, "invalid_grant")
+        check_audience(user_key, user, aud, mode=effective_mode)
+        shape = resolve_shape(user.token_version, form, headers.get("x-token-shape"))
+        roles = resolve_roles(user_key, user, aud)
+        claims = provider.user_claims(issuer, user, aud, shape, 3600, roles, form.get("client_id"))
+    else:
+        sp_key = form.get("client_id") or ""
+        sp = _cfg.SERVICE_PRINCIPALS.get(sp_key)
+        if not sp or sp.secret != form.get("client_secret"):
+            raise HTTPException(401, "invalid_client")
+        check_audience(sp_key, sp, aud, mode=effective_mode)
+        shape = resolve_shape(sp.token_version, form, headers.get("x-token-shape"))
+        roles = resolve_roles(sp_key, sp, aud)
+        claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, 3600, roles)
+
+    return {
+        "access_token": make_unsigned_token(claims),
+        "token_type": "Bearer",
+        "expires_in": 3600,
+    }
+
+
+@router.post("/{issuer}/token/wrong-alg")
+async def token_wrong_alg(issuer: str, request: Request):
+    """Auth enforced; token HS256-signed using the RSA public key as HMAC secret."""
+    form = dict(await request.form())
+    headers = {k.lower(): v for k, v in request.headers.items()}
+    aud = resolve_aud(form)
+    provider = get_provider("entra_id")
+    effective_mode = _cfg.ISSUER_MODES.get(issuer) or _cfg.MODE
+
+    if form.get("grant_type") == "password":
+        user_key = form.get("username") or ""
+        user = _cfg.USERS.get(user_key)
+        if not user or user.password != form.get("password"):
+            raise HTTPException(401, "invalid_grant")
+        check_audience(user_key, user, aud, mode=effective_mode)
+        shape = resolve_shape(user.token_version, form, headers.get("x-token-shape"))
+        roles = resolve_roles(user_key, user, aud)
+        claims = provider.user_claims(issuer, user, aud, shape, 3600, roles, form.get("client_id"))
+    else:
+        sp_key = form.get("client_id") or ""
+        sp = _cfg.SERVICE_PRINCIPALS.get(sp_key)
+        if not sp or sp.secret != form.get("client_secret"):
+            raise HTTPException(401, "invalid_client")
+        check_audience(sp_key, sp, aud, mode=effective_mode)
+        shape = resolve_shape(sp.token_version, form, headers.get("x-token-shape"))
+        roles = resolve_roles(sp_key, sp, aud)
+        claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, 3600, roles)
+
+    return {
+        "access_token": make_wrong_alg_token(claims, get_signing_public_key_pem()),
         "token_type": "Bearer",
         "expires_in": 3600,
     }

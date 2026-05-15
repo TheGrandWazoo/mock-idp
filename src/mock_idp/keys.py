@@ -1,3 +1,4 @@
+from cryptography.hazmat.primitives import serialization
 from authlib.jose import JsonWebKey
 
 
@@ -25,6 +26,14 @@ def get_alt_key() -> JsonWebKey:
 def get_jwks_keys() -> list[JsonWebKey]:
     """Active signing key first, then decoys — tests the gateway's kid-based selection."""
     return [_signing_key] + _decoy_keys
+
+
+def get_signing_public_key_pem() -> bytes:
+    """PEM-encoded RSA public key — used as HMAC secret for wrong-alg tokens."""
+    return _signing_key.as_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
 
 
 def rotate() -> JsonWebKey:
