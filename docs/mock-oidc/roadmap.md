@@ -1,39 +1,12 @@
 # Roadmap & Future Considerations — Python Mock OIDC
 
-What's not in v0.2, what's worth doing next, and what's parked unless a
+What's not yet shipped, what's worth doing next, and what's parked unless a
 specific need surfaces.
 
-The v0.2 surface is documented in `docs/architecture.md`,
-`docs/implementation-guide.md`, and `docs/test-scenarios.md`. This file
-exists so design conversations stay grounded — if someone says "we
-should add X", you can check whether X is already on the list and what
-the thinking was at the time.
-
----
-
-## v0.3 committed (in-flight design, will ship as v0.3)
-
-These items have an accepted ADR and a settled design. Implementation is next.
-
-### ✅ Provider plugin architecture
-
-Extract token claim building into a `providers/` module. `TenantRecord` gains a
-`provider` field (default: `entra_id`). Adding a new provider profile is an additive
-file plus a one-line registry entry — no changes to routing, keys, or config loading.
-
-See [ADR-002](../ADR-002-provider-plugin-architecture.md).
-
-### ✅ Entra ID rich authorization model
-
-Separates *service principals* (identities that request tokens) from *clients*
-(resource apps that receive them). Clients define what roles exist; grants assign
-those roles to specific users or service principals per resource. Token building
-resolves roles from the grant table rather than a flat list on the identity.
-
-Backward compatible: tenants without a `clients:` grants block continue to use flat
-roles as in v0.2.
-
-See [ADR-002](../ADR-002-provider-plugin-architecture.md).
+Current release is **v0.3.0**. The v0.3 surface is documented in ADR-002 and
+the commit history. This file exists so design conversations stay grounded —
+if someone says "we should add X", you can check whether X is already on the
+list and what the thinking was at the time.
 
 ---
 
@@ -394,14 +367,18 @@ fixture, fresh-start-per-restart is ideal.
   records to the grouping key. `users:` and `clients:` nest under
   `tenants: {<tid>: {...}}`. Eliminates repeated `tid` on every record; enables
   multi-tenant configs in a single file.
-- ✓ **Provider plugin architecture** — `providers/` module; dispatch by `provider:`
+- ✓ **Provider plugin architecture (v0.3)** — `providers/` module; dispatch by `provider:`
   field on `TenantRecord` (default `entra_id`). Claim-shape emulation only, not full
   flow emulation. See ADR-002.
-- ✓ **Entra ID rich grants model** — `service_principals:` for machine identities,
-  `clients:` for resource apps with `grants:` per identity. Flat roles remain as
-  backward-compatible fallback. See ADR-002.
-- ✓ **Feature gates are implicit** — presence of `clients:` grants block activates
+- ✓ **Entra ID rich grants model (v0.3)** — `service_principals:` for machine identities,
+  `clients:` for resource apps with `grants:` per identity. `resolve_roles()` uses grants
+  table when a `ClientAppRecord` exists; falls back to flat `roles` otherwise. SP grants
+  resolve by original config name, not UUID alias. See ADR-002.
+- ✓ **Feature gates are implicit (v0.3)** — presence of `clients:` grants block activates
   grants model; no explicit `features:` flag. Simple config stays simple.
+- ✓ **Playground update (v0.4 candidate)** — audience dropdown from `client_apps`,
+  `service_principals` identity group, resolved-roles display per audience. Deferred
+  until debug endpoint shape stabilises post-v0.3.
 
 These were once open questions; resolved during v0.2 design:
 

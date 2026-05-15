@@ -24,20 +24,32 @@ Dependencies live in `pyproject.toml`. `uv.lock` pins exact versions. Do not ref
 ## Project layout
 
 ```
-src/
-  app.py            FastAPI application
-  playground.html   Token playground served at GET /
+src/mock_idp/
+  main.py           FastAPI app entrypoint
+  config.py         Config loader; exports USERS, SERVICE_PRINCIPALS, CLIENT_APPS
+  models.py         Pydantic models (UserRecord, ServicePrincipalRecord, ClientAppRecord, TenantRecord, AppConfig)
+  tokens.py         Provider-agnostic helpers: resolve_roles, check_audience, sign, redact, …
+  keys.py           RSA key generation and rotation
+  providers/
+    __init__.py     Provider registry: get_provider(name) → module
+    entra_id.py     Entra ID claim building: user_claims(), sp_claims()
+  routers/
+    oidc.py         Discovery, JWKS, /token, /userinfo endpoints
+    admin.py        POST /admin/rotate-jwks
+    debug.py        /debug/identities, /debug/config, /debug/decode
+    playground.py   Serves playground.html at GET /
+src/playground.html Browser token playground
 tests/
-  test_app.py       pytest suite
+  test_app.py       pytest suite (35 tests)
 manifests/
   mock-idp.yaml     ConfigMap + Deployment + Service + Ingress
 .github/workflows/
   ci.yml            Lint → test → build/push → Trivy scan
-config.example.yaml Sample identity store for local dev
+config.example.yaml Sample identity store (v0.3 schema with tenants + grants)
 pyproject.toml      Project metadata and dependencies
 uv.lock             Locked dependency versions
 Dockerfile
-docs/mock-oidc/     Architecture, ADR, roadmap, test scenarios, briefs
+docs/mock-oidc/     ADRs, roadmap, architecture, test scenarios, briefs
 ```
 
 ## Running locally
