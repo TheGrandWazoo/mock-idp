@@ -56,6 +56,7 @@ tenants:
         secret: admin-secret
         label: TestAdmin
         override_any_claim: true
+        # override_iss_too: true  # uncomment to allow iss claim override (negative iss-validation testing)
 
     clients:
       api://serviceB:

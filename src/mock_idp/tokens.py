@@ -16,6 +16,7 @@ _RESERVED_FORM_FIELDS = {
     "password",
     "resource",
     "scope",
+    "iss",  # gated separately via override_iss_too
 }
 
 
@@ -105,9 +106,15 @@ def check_audience(identity_key: str, identity: UserRecord | ServicePrincipalRec
         )
 
 
-def apply_overrides(claims: dict, form: dict) -> None:
+def apply_overrides(claims: dict, form: dict, allow_iss: bool = False) -> None:
     for k, v in form.items():
-        if not k or k in _RESERVED_FORM_FIELDS:
+        if not k:
+            continue
+        if k == "iss":
+            if allow_iss:
+                claims["iss"] = v
+            continue
+        if k in _RESERVED_FORM_FIELDS:
             continue
         if k in _LIST_CLAIMS and isinstance(v, str):
             claims[k] = [item.strip() for item in v.split(",") if item.strip()]

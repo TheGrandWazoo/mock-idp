@@ -40,6 +40,7 @@ class ServicePrincipalRecord(BaseModel):
     allowed_audiences: list[str] = []
     extra_claims: dict[str, Any] = {}
     override_any_claim: bool = False
+    override_iss_too: bool = False  # explicit second flag required to override iss
     _canonical_id: str = PrivateAttr(default="")
     _name: str = PrivateAttr(default="")  # original key in service_principals; used for grants lookup
 
