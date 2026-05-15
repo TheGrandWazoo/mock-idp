@@ -17,6 +17,12 @@
       --error-bg: #fdecec;
       --error-border: #f4a;
       --error-fg: #8a1414;
+      --warn-bg: #fffbea;
+      --warn-border: #f0c040;
+      --warn-fg: #7a5800;
+      --ok-bg: #edfaf1;
+      --ok-border: #6fcf97;
+      --ok-fg: #1a5c34;
     }
     * { box-sizing: border-box; }
     body {
@@ -69,6 +75,7 @@
       outline: 2px solid var(--accent);
       outline-offset: -1px;
     }
+    input:disabled, select:disabled { opacity: 0.5; cursor: not-allowed; }
     button {
       background: var(--accent);
       color: white;
@@ -135,6 +142,25 @@
       border-radius: 3px;
       font-size: 0.95em;
     }
+    .grant-ok {
+      display: inline-block;
+      background: var(--ok-bg);
+      border: 1px solid var(--ok-border);
+      color: var(--ok-fg);
+      border-radius: 4px;
+      padding: 0.35rem 0.75rem;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+    .grant-none {
+      display: inline-block;
+      background: var(--warn-bg);
+      border: 1px solid var(--warn-border);
+      color: var(--warn-fg);
+      border-radius: 4px;
+      padding: 0.35rem 0.75rem;
+      font-size: 0.85rem;
+    }
     details.card > summary {
       cursor: pointer;
       user-select: none;
@@ -170,7 +196,7 @@
       <h2>1. Identity</h2>
       <div class="row">
         <div class="field">
-          <label for="identity">User or client</label>
+          <label for="identity">User or service principal</label>
           <select id="identity"><option>Loading…</option></select>
           <div class="hint" id="identity-hint">&nbsp;</div>
         </div>
@@ -191,7 +217,7 @@
           <input type="text" id="issuer" value="default" spellcheck="false">
           <div class="hint">URL path segment; any URL-safe string</div>
         </div>
-        <div class="field">
+        <div class="field" id="aud-field">
           <label for="audience">Audience (<code>aud</code>)</label>
           <input type="text" id="audience" value="api://serviceB" spellcheck="false">
           <div class="hint">Becomes the <code>aud</code> claim</div>
@@ -205,6 +231,10 @@
           </select>
         </div>
       </div>
+    </div>
+
+    <div id="grants-panel" class="card" hidden>
+      <!-- Populated dynamically when a known client app is selected -->
     </div>
 
     <div class="card">
@@ -303,40 +333,137 @@
     function recallCredential(type, key) {
       try { return localStorage.getItem(lsKey(type, key)) || ''; } catch (e) { return ''; }
     }
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+    }
+
     function selectedIdentity() {
       const val = identitySel.value;
-      if (val.startsWith('user:'))   return { type: 'user',   key: val.slice(5) };
-      if (val.startsWith('client:')) return { type: 'client', key: val.slice(7) };
+      if (val.startsWith('user:')) return { type: 'user', key: val.slice(5) };
+      if (val.startsWith('sp:'))   return { type: 'sp',   key: val.slice(3) };
       return null;
     }
-    function escapeHtml(s) {
-      return String(s).replace(/[&<>]/g, (c) =>
-        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+
+    function getAudience() {
+      const audSel = $('aud-select');
+      if (audSel) {
+        if (audSel.value === '__custom__') return ($('aud-custom') || {}).value?.trim() || '';
+        return audSel.value;
+      }
+      return ($('audience') || {}).value?.trim() || 'api://serviceB';
     }
+
+    function buildAudienceWidget() {
+      const apps = (state.identities || {}).client_apps || {};
+      const keys = Object.keys(apps).sort();
+      const field = $('aud-field');
+
+      if (keys.length === 0) {
+        field.innerHTML = `
+          <label for="audience">Audience (<code>aud</code>)</label>
+          <input type="text" id="audience" value="api://serviceB" spellcheck="false">
+          <div class="hint">Becomes the <code>aud</code> claim</div>`;
+        $('audience').addEventListener('input', updateGrantsPanel);
+        return;
+      }
+
+      const opts = keys.map(k => {
+        const app = apps[k];
+        const label = app.label ? `${escapeHtml(k)} (${escapeHtml(app.label)})` : escapeHtml(k);
+        return `<option value="${escapeHtml(k)}">${label}</option>`;
+      }).join('') + '<option value="__custom__">Custom…</option>';
+
+      field.innerHTML = `
+        <label for="aud-select">Audience (<code>aud</code>)</label>
+        <select id="aud-select">${opts}</select>
+        <input type="text" id="aud-custom" placeholder="api://custom-audience"
+               spellcheck="false" style="margin-top:0.4rem;display:none">
+        <div class="hint">Becomes the <code>aud</code> claim</div>`;
+
+      $('aud-select').addEventListener('change', () => {
+        const isCustom = $('aud-select').value === '__custom__';
+        $('aud-custom').style.display = isCustom ? 'block' : 'none';
+        updateGrantsPanel();
+      });
+      $('aud-custom').addEventListener('input', updateGrantsPanel);
+    }
+
     function updateIdentityHint() {
       const sel = selectedIdentity();
       if (!sel || !state.identities) {
         identityHint.innerHTML = '&nbsp;';
         credentialLabel.textContent = 'Password / secret';
         credentialInput.value = '';
+        updateGrantsPanel();
         return;
       }
       const isUser = sel.type === 'user';
       const rec = isUser
         ? state.identities.users[sel.key]
-        : state.identities.clients[sel.key];
-      if (!rec) { identityHint.innerHTML = '&nbsp;'; return; }
-      const aud = (rec.allowed_audiences || []).join(', ') || '(any in lax mode)';
+        : state.identities.service_principals[sel.key];
+      if (!rec) { identityHint.innerHTML = '&nbsp;'; updateGrantsPanel(); return; }
+
       const defaultShape = rec.token_version || (isUser ? 'v2' : 'v1');
+      const groups = (rec.groups || []).join(', ') || '—';
       const adminTag = rec.override_any_claim
         ? ' · <strong style="color:#a00">admin override</strong>' : '';
       identityHint.innerHTML =
-        `${isUser ? 'User' : 'Client'} · default shape: ` +
-        `<code>${escapeHtml(defaultShape)}</code> · allowed_audiences: ` +
-        `${escapeHtml(aud)}${adminTag}`;
+        `${isUser ? 'User' : 'Service principal'} · shape: ` +
+        `<code>${escapeHtml(defaultShape)}</code> · groups: ${escapeHtml(groups)}${adminTag}`;
       credentialLabel.textContent = isUser ? 'Password' : 'Client secret';
       credentialInput.placeholder = isUser ? 'password' : 'client_secret';
       credentialInput.value = recallCredential(sel.type, sel.key);
+      updateGrantsPanel();
+    }
+
+    function updateGrantsPanel() {
+      const panel = $('grants-panel');
+      const sel = selectedIdentity();
+      const apps = (state.identities || {}).client_apps || {};
+      const aud = getAudience();
+      const app = aud ? apps[aud] : null;
+
+      if (!sel || !app) {
+        panel.hidden = true;
+        return;
+      }
+
+      const grants = app.grants?.[sel.key] || [];
+      const isAdmin = sel.type === 'sp' &&
+        !!(state.identities.service_principals[sel.key] || {}).override_any_claim;
+
+      const appLabel = app.label ? `${escapeHtml(aud)} · ${escapeHtml(app.label)}` : escapeHtml(aud);
+      const availableRoles = (app.roles || []).map(r => `<code>${escapeHtml(r)}</code>`).join(' ');
+
+      let grantHtml;
+      if (grants.length) {
+        grantHtml = `<span class="grant-ok">✓ ${escapeHtml(grants.join(', '))}</span>`;
+      } else {
+        grantHtml = `<span class="grant-none">No grant configured — token will have empty roles in lax mode, rejected in strict</span>`;
+      }
+
+      let overrideHtml = '';
+      if (isAdmin) {
+        overrideHtml = `
+          <div class="field" style="margin-top:1rem;max-width:360px">
+            <label for="roles-override">Roles override <span style="color:var(--error-fg);font-weight:normal">(admin only)</span></label>
+            <input type="text" id="roles-override" placeholder="superuser,admin" spellcheck="false">
+            <div class="hint">Comma-separated; replaces the <code>roles</code> claim</div>
+          </div>`;
+      }
+
+      panel.innerHTML = `
+        <h2>3. Grants · ${appLabel}</h2>
+        <div style="margin-bottom:0.5rem">
+          <span class="hint">Available roles on this app: ${availableRoles || '—'}</span>
+        </div>
+        <div style="margin-bottom:0.25rem">
+          <span class="hint" style="margin-right:0.4rem">Resolved for <strong>${escapeHtml(sel.key)}</strong>:</span>
+          ${grantHtml}
+        </div>
+        ${overrideHtml}`;
+      panel.hidden = false;
     }
 
     async function loadIdentities() {
@@ -349,9 +476,11 @@
         identitySel.innerHTML = '<option>(error — is /debug/identities reachable?)</option>';
         return;
       }
+
       identitySel.innerHTML = '';
-      const userKeys   = Object.keys(state.identities.users   || {}).sort();
-      const clientKeys = Object.keys(state.identities.clients || {}).sort();
+      const userKeys = Object.keys(state.identities.users || {}).sort();
+      const spKeys   = Object.keys(state.identities.service_principals || {}).sort();
+
       if (userKeys.length) {
         const og = document.createElement('optgroup');
         og.label = 'Users';
@@ -363,18 +492,20 @@
         }
         identitySel.appendChild(og);
       }
-      if (clientKeys.length) {
+      if (spKeys.length) {
         const og = document.createElement('optgroup');
-        og.label = 'Clients';
-        for (const k of clientKeys) {
+        og.label = 'Service Principals';
+        for (const k of spKeys) {
+          const rec = state.identities.service_principals[k];
           const o = document.createElement('option');
-          o.value = 'client:' + k;
-          const rec = state.identities.clients[k];
+          o.value = 'sp:' + k;
           o.textContent = rec.label ? `${k} (${rec.label})` : k;
           og.appendChild(o);
         }
         identitySel.appendChild(og);
       }
+
+      buildAudienceWidget();
       updateIdentityHint();
     }
 
@@ -389,9 +520,9 @@
       const sel = selectedIdentity();
       if (!sel) return showError('No identity selected.');
 
-      const issuer   = $('issuer').value.trim() || 'default';
-      const audience = $('audience').value.trim() || 'api://serviceB';
-      const shape    = $('shape').value;
+      const issuer     = $('issuer').value.trim() || 'default';
+      const audience   = getAudience() || 'api://serviceB';
+      const shape      = $('shape').value;
       const credential = credentialInput.value;
 
       const body = new URLSearchParams();
@@ -412,6 +543,13 @@
         curlBody = `grant_type=client_credentials&client_id=${encodeURIComponent(sel.key)}` +
                    `&client_secret=${encodeURIComponent(credential)}` +
                    `&resource=${encodeURIComponent(audience)}`;
+      }
+
+      // Admin roles override
+      const rolesOverride = ($('roles-override') || {}).value?.trim();
+      if (rolesOverride) {
+        body.set('roles', rolesOverride);
+        curlBody += `&roles=${encodeURIComponent(rolesOverride)}`;
       }
 
       const headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
