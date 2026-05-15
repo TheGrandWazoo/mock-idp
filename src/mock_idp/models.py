@@ -82,6 +82,7 @@ class AppConfig(BaseModel):
     auth_mode: str = "lax"
     cors_allow_origins: list[str] = ["*"]
     admin_token: str = "change-me"
+    issuer_modes: dict[str, str] = {}  # per-issuer-slug auth_mode overrides
     tenants: dict[str, TenantRecord] = {}
 
     @field_validator("auth_mode")
@@ -91,6 +92,17 @@ class AppConfig(BaseModel):
         if v not in ("lax", "strict"):
             raise ValueError("auth_mode must be 'lax' or 'strict'")
         return v
+
+    @field_validator("issuer_modes")
+    @classmethod
+    def _valid_issuer_modes(cls, v: dict) -> dict:
+        result = {}
+        for slug, mode in v.items():
+            mode = str(mode).lower()
+            if mode not in ("lax", "strict"):
+                raise ValueError(f"issuer_modes[{slug!r}] must be 'lax' or 'strict'")
+            result[slug] = mode
+        return result
 
 
 class DecodeRequest(BaseModel):

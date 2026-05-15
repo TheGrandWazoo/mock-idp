@@ -2,6 +2,12 @@ auth_mode: lax
 cors_allow_origins: ["*"]
 admin_token: change-me-in-real-deployments
 
+# Per-issuer auth_mode overrides. The URL slug (e.g. /strict-issuer/token)
+# maps to "lax" or "strict", overriding the global auth_mode above.
+# issuer_modes:
+#   strict-issuer: strict
+#   permissive-issuer: lax
+
 tenants:
   22222222-2222-2222-2222-222222222222:
     provider: entra_id

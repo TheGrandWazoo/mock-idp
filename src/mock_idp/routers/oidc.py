@@ -61,13 +61,14 @@ async def token(issuer: str, request: Request):
     grant_type = form.get("grant_type")
     aud = resolve_aud(form)
     provider = get_provider("entra_id")
+    effective_mode = _cfg.ISSUER_MODES.get(issuer) or _cfg.MODE
 
     if grant_type == "password":
         user_key = form.get("username") or ""
         user = _cfg.USERS.get(user_key)
         if not user or user.password != form.get("password"):
             raise HTTPException(401, "invalid_grant")
-        check_audience(user_key, user, aud)
+        check_audience(user_key, user, aud, mode=effective_mode)
         shape = resolve_shape(user.token_version, form, headers.get("x-token-shape"))
         expires_in = resolve_expiry(user.token_lifetime_seconds, headers)
         roles = resolve_roles(user_key, user, aud)
@@ -79,7 +80,7 @@ async def token(issuer: str, request: Request):
         sp = _cfg.SERVICE_PRINCIPALS.get(sp_key)
         if not sp or sp.secret != form.get("client_secret"):
             raise HTTPException(401, "invalid_client")
-        check_audience(sp_key, sp, aud)
+        check_audience(sp_key, sp, aud, mode=effective_mode)
         shape = resolve_shape(sp.token_version, form, headers.get("x-token-shape"))
         expires_in = resolve_expiry(sp.token_lifetime_seconds, headers)
         roles = resolve_roles(sp_key, sp, aud)
@@ -106,13 +107,14 @@ async def token_wrong_sig(issuer: str, request: Request):
     headers = {k.lower(): v for k, v in request.headers.items()}
     aud = resolve_aud(form)
     provider = get_provider("entra_id")
+    effective_mode = _cfg.ISSUER_MODES.get(issuer) or _cfg.MODE
 
     if form.get("grant_type") == "password":
         user_key = form.get("username") or ""
         user = _cfg.USERS.get(user_key)
         if not user or user.password != form.get("password"):
             raise HTTPException(401, "invalid_grant")
-        check_audience(user_key, user, aud)
+        check_audience(user_key, user, aud, mode=effective_mode)
         shape = resolve_shape(user.token_version, form, headers.get("x-token-shape"))
         roles = resolve_roles(user_key, user, aud)
         claims = provider.user_claims(issuer, user, aud, shape, 3600, roles, form.get("client_id"))
@@ -121,7 +123,7 @@ async def token_wrong_sig(issuer: str, request: Request):
         sp = _cfg.SERVICE_PRINCIPALS.get(sp_key)
         if not sp or sp.secret != form.get("client_secret"):
             raise HTTPException(401, "invalid_client")
-        check_audience(sp_key, sp, aud)
+        check_audience(sp_key, sp, aud, mode=effective_mode)
         shape = resolve_shape(sp.token_version, form, headers.get("x-token-shape"))
         roles = resolve_roles(sp_key, sp, aud)
         claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, 3600, roles)

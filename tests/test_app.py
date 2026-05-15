@@ -377,6 +377,46 @@ def test_strict_mode_rejects_identity_without_grant(client):
         m.MODE = original
 
 
+# ── Per-issuer auth_mode ───────────────────────────────────────────────────
+
+
+def test_per_issuer_strict_overrides_global_lax(client):
+    """An issuer slug mapped to strict rejects unlisted audiences even when global is lax."""
+    import mock_idp.config as m
+
+    assert m.MODE == "lax"
+    m.ISSUER_MODES["strict-slug"] = "strict"
+    try:
+        r = client.post(
+            "/strict-slug/token",
+            data={"grant_type": "password", "username": "bob", "password": "bob-pw",
+                  "resource": "api://serviceC"},
+        )
+        assert r.status_code == 400
+        assert r.json()["detail"]["error"] == "invalid_target"
+    finally:
+        m.ISSUER_MODES.pop("strict-slug", None)
+
+
+def test_per_issuer_lax_overrides_global_strict(client):
+    """An issuer slug mapped to lax allows any audience even when global is strict."""
+    import mock_idp.config as m
+
+    original = m.MODE
+    m.MODE = "strict"
+    m.ISSUER_MODES["lax-slug"] = "lax"
+    try:
+        r = client.post(
+            "/lax-slug/token",
+            data={"grant_type": "password", "username": "alice", "password": "alice-pw",
+                  "resource": "api://anything-goes"},
+        )
+        assert r.status_code == 200
+    finally:
+        m.MODE = original
+        m.ISSUER_MODES.pop("lax-slug", None)
+
+
 # ── Admin override ─────────────────────────────────────────────────────────
 
 
