@@ -8,7 +8,7 @@ class UserRecord(BaseModel):
     upn: Optional[str] = None
     preferred_username: Optional[str] = None
     oid: str = "00000000-0000-0000-0000-000000000000"
-    tid: str = "22222222-2222-2222-2222-222222222222"
+    tid: str = ""  # injected from tenant key at load time
     token_version: str = "v2"
     token_lifetime_seconds: int = 3600
     roles: list[str] = []
@@ -34,7 +34,7 @@ class ClientRecord(BaseModel):
     token_lifetime_seconds: int = 3600
     roles: list[str] = []
     groups: list[str] = []
-    tid: str = "22222222-2222-2222-2222-222222222222"
+    tid: str = ""  # injected from tenant key at load time
     allowed_audiences: list[str] = []
     extra_claims: dict[str, Any] = {}
     override_any_claim: bool = False
@@ -48,12 +48,16 @@ class ClientRecord(BaseModel):
         return v
 
 
+class TenantRecord(BaseModel):
+    users: dict[str, UserRecord] = {}
+    clients: dict[str, ClientRecord] = {}
+
+
 class AppConfig(BaseModel):
     auth_mode: str = "lax"
     cors_allow_origins: list[str] = ["*"]
     admin_token: str = "change-me"
-    users: dict[str, UserRecord] = {}
-    clients: dict[str, ClientRecord] = {}
+    tenants: dict[str, TenantRecord] = {}
 
     @field_validator("auth_mode")
     @classmethod
