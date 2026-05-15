@@ -72,6 +72,8 @@ class ClientAppRecord(BaseModel):
 
 
 class TenantRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     provider: str = "entra_id"
     users: dict[str, UserRecord] = {}
     service_principals: dict[str, ServicePrincipalRecord] = {}
@@ -79,6 +81,8 @@ class TenantRecord(BaseModel):
 
 
 class AppConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     auth_mode: str = "lax"
     cors_allow_origins: list[str] = ["*"]
     admin_token: str = "change-me"
