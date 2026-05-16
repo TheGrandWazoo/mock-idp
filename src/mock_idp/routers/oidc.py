@@ -59,7 +59,7 @@ async def discovery(issuer: str, request: Request):
 async def jwks(issuer: str, request: Request):
     headers = {k.lower(): v for k, v in request.headers.items()}
     await apply_test_hooks(headers)
-    return {"keys": [k.as_dict(is_private=False) for k in get_jwks_keys()]}
+    return {"keys": [k.as_dict(is_private=False) for k in get_jwks_keys(issuer)]}
 
 
 @router.post("/{issuer}/token")
@@ -111,7 +111,7 @@ async def token(issuer: str, request: Request):
                 detail={"error": "invalid_request", "error_description": "subject_token required"},
             )
 
-        subject_claims = verify_token(subject_token_str, get_jwks_keys())
+        subject_claims = verify_token(subject_token_str, get_jwks_keys(issuer))
         if subject_claims is None:
             raise HTTPException(
                 400,
@@ -143,7 +143,7 @@ async def token(issuer: str, request: Request):
 
         omit(claims, headers.get("x-omit-claims"))
         return {
-            "access_token": sign(claims, get_signing_key()),
+            "access_token": sign(claims, get_signing_key(issuer)),
             "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
             "token_type": "Bearer",
             "expires_in": max(0, claims["exp"] - int(time.time())),
@@ -154,7 +154,7 @@ async def token(issuer: str, request: Request):
 
     omit(claims, headers.get("x-omit-claims"))
     return {
-        "access_token": sign(claims, get_signing_key()),
+        "access_token": sign(claims, get_signing_key(issuer)),
         "token_type": "Bearer",
         "expires_in": max(0, claims["exp"] - int(time.time())),
         "scope": form.get("scope", "openid profile email"),
@@ -190,7 +190,7 @@ async def token_wrong_sig(issuer: str, request: Request):
         claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, 3600, roles)
 
     return {
-        "access_token": sign(claims, get_alt_key()),
+        "access_token": sign(claims, get_alt_key(issuer)),
         "token_type": "Bearer",
         "expires_in": 3600,
     }
@@ -260,7 +260,7 @@ async def token_wrong_alg(issuer: str, request: Request):
         claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, 3600, roles)
 
     return {
-        "access_token": make_wrong_alg_token(claims, get_signing_public_key_pem()),
+        "access_token": make_wrong_alg_token(claims, get_signing_public_key_pem(issuer)),
         "token_type": "Bearer",
         "expires_in": 3600,
     }
@@ -312,7 +312,7 @@ async def introspect(issuer: str, request: Request):
             detail={"error": "invalid_request", "error_description": "token parameter required"},
         )
 
-    claims = verify_token(token_str, get_jwks_keys())
+    claims = verify_token(token_str, get_jwks_keys(issuer))
     if claims is None:
         return {"active": False}
 
@@ -334,7 +334,7 @@ async def userinfo(issuer: str, authorization: str = Header(...)):
     if not authorization.startswith("Bearer "):
         raise HTTPException(401, "missing bearer token")
     try:
-        claims = jwt.decode(authorization[7:], get_signing_key())
+        claims = jwt.decode(authorization[7:], get_signing_key(issuer))
     except Exception:
         raise HTTPException(401, "invalid token")
     return JSONResponse(dict(claims))

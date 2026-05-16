@@ -649,7 +649,8 @@ def test_debug_config(client):
     assert r.status_code == 200
     data = r.json()
     assert "auth_mode" in data
-    assert "signing_kid" in data
+    assert "signing_kids" in data
+    assert isinstance(data["signing_kids"], dict)
 
 
 def test_debug_decode(client):
@@ -695,11 +696,13 @@ def test_admin_rotate_wrong_token(client):
 
 
 def test_admin_rotate_changes_kid(client):
-    before = client.get("/debug/config").json()["signing_kid"]
+    before = client.get("/debug/config").json()["signing_kids"]["default"]
     client.post(
-        "/admin/rotate-jwks", headers={"X-Admin-Token": "change-me-in-real-deployments"}
+        "/admin/rotate-jwks",
+        params={"issuer": "default"},
+        headers={"X-Admin-Token": "change-me-in-real-deployments"},
     )
-    after = client.get("/debug/config").json()["signing_kid"]
+    after = client.get("/debug/config").json()["signing_kids"]["default"]
     assert before != after
 
 
@@ -989,6 +992,46 @@ def test_token_exchange_discovery_includes_grant(client):
 def test_unsupported_grant_type(client):
     r = client.post("/default/token", data={"grant_type": "authorization_code"})
     assert r.status_code == 400
+
+
+# ── Per-issuer signing key isolation ──────────────────────────────────────
+
+
+def test_per_issuer_jwks_distinct_kids(client):
+    """Two different issuer paths must publish completely different key sets."""
+    kids_a = {k["kid"] for k in client.get("/default/jwks").json()["keys"]}
+    kids_b = {k["kid"] for k in client.get("/other-issuer/jwks").json()["keys"]}
+    assert kids_a.isdisjoint(kids_b)
+
+
+def test_token_only_verifies_against_own_issuer_jwks(client):
+    """A token from /default must not verify against /other-issuer's published keys."""
+    from mock_idp.keys import get_jwks_keys
+    from mock_idp.tokens import verify_token
+
+    token = client.post(
+        "/default/token",
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw",
+              "resource": "api://serviceB"},
+    ).json()["access_token"]
+
+    assert verify_token(token, get_jwks_keys("default")) is not None
+    assert verify_token(token, get_jwks_keys("other-issuer")) is None
+
+
+def test_admin_rotate_single_issuer_does_not_affect_others(client):
+    """Rotating one issuer's key must leave other issuers' kids unchanged."""
+    kids_before = client.get("/debug/config").json()["signing_kids"]
+    client.post(
+        "/admin/rotate-jwks",
+        params={"issuer": "default"},
+        headers={"X-Admin-Token": "change-me-in-real-deployments"},
+    )
+    kids_after = client.get("/debug/config").json()["signing_kids"]
+    assert kids_after["default"] != kids_before["default"]
+    for issuer, kid in kids_before.items():
+        if issuer != "default":
+            assert kids_after[issuer] == kid
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

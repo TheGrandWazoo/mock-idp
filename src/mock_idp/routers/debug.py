@@ -1,13 +1,12 @@
 import base64
 import json
 
-from authlib.jose import jwt
 from fastapi import APIRouter, HTTPException
 
 from .. import config as _cfg
-from ..keys import get_signing_key, key_kid
+from ..keys import all_jwks_keys, all_signing_kids
 from ..models import DecodeRequest
-from ..tokens import redact
+from ..tokens import redact, verify_token
 
 router = APIRouter(prefix="/debug")
 
@@ -28,12 +27,7 @@ async def debug_decode(body: DecodeRequest):
     except Exception as exc:
         raise HTTPException(400, f"decode failed: {exc}")
 
-    sig_ok = False
-    try:
-        jwt.decode(body.token, get_signing_key())
-        sig_ok = True
-    except Exception:
-        pass
+    sig_ok = verify_token(body.token, all_jwks_keys()) is not None
 
     return {
         "header": header,
@@ -64,6 +58,6 @@ async def debug_config():
         "user_count": len(_cfg.USERS),
         "service_principal_count": len(_cfg._service_principals_raw),
         "client_app_count": len(_cfg.CLIENT_APPS),
-        "signing_kid": key_kid(get_signing_key()),
+        "signing_kids": all_signing_kids(),
         "alt_kid_present": True,
     }
