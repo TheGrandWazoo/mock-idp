@@ -105,7 +105,7 @@ def all_jwks_keys() -> list[_JWK]:
     """All published keys across all known issuers — for debug/decode only."""
     with _lock:
         stores = list(_stores.values())
-    keys: list[JsonWebKey] = []
+    keys: list[_JWK] = []
     for store in stores:
         keys.extend(store.jwks_keys())
     return keys
