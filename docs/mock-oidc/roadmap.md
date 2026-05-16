@@ -3,58 +3,95 @@
 What's not yet shipped, what's worth doing next, and what's parked unless a
 specific need surfaces.
 
-Current release is **v0.3.9**. The v0.3 surface is documented in ADR-002 and
-the commit history. This file exists so design conversations stay grounded —
-if someone says "we should add X", you can check whether X is already on the
-list and what the thinking was at the time.
+Current release is **v0.3.9**. v0.4 planning is underway — see the v0.4
+candidates section below. The v0.3 surface is documented in ADR-002 and
+ADR-003 and the commit history.
 
 ---
 
 ## Status legend
 
-- 🟢 **v0.3 candidate** — meaningful next step; build when a real test demands it
+- 🟢 **v0.4 candidate** — meaningful next step; build when a real test demands it
 - 🟡 **Parked** — useful but no concrete demand yet; revisit when one shows up
 - 🔴 **Maybe-never** — build only if a concrete and well-scoped use case appears
 
 ---
 
-## v0.3 candidates
+## v0.4 candidates
 
-### 🟢 Secret management integration
+Items are grouped by theme. Within each group, higher entries are higher
+priority based on effort-to-value ratio.
 
-Load passwords, client secrets, and the admin token from external secret
-stores instead of plain text in the YAML config. Two target surfaces:
+### Backend / persistence
 
-- **Environment variables or mounted files** — read secrets from env vars
-  or files at startup (e.g., Kubernetes Secret mounted at a path).
-  Zero-dependency; works in any environment.
-- **Vault / secrets manager** — use `hvac` (HashiCorp Vault) or a
-  cloud-provider SDK to pull secrets at startup. Config references a
-  path (`vault://secret/mock-idp/clients`) instead of a literal value.
+#### 🟢 Secret management (`from_env` / `from_file`)
+
+Load passwords, client secrets, and the admin token from environment
+variables or mounted files instead of plain text in the YAML config.
 
 **Why:** plain-text secrets in a ConfigMap are acceptable for a test
 fixture but problematic in environments with secret-scanning CI checks
-or stricter compliance posture. Even for a test tool, secrets-in-config
-is a bad habit.
+or stricter compliance posture. Kubernetes Secrets mounted at a path is
+the zero-dependency solution.
 
 **Shape:**
 
 ```yaml
-clients:
+service_principals:
   service-a:
     secret:
       from_env: MOCK_IDP_SERVICE_A_SECRET   # reads os.environ
       # or:
-      from_file: /var/run/secrets/service-a  # reads file contents
-      # or:
-      from_vault: secret/data/mock-idp/service-a  # hvac lookup
+      from_file: /var/run/secrets/service-a  # reads file contents (trimmed)
 ```
 
-**Effort:** ~50 LOC; add `hvac` as an optional dependency; config
-loading layer resolves secret references before populating the identity
-store.
+**Effort:** ~30 LOC; resolved in `YamlIdentityStore._apply()` before the
+Pydantic model is populated. No new dependencies needed for env/file;
+`hvac` optional for Vault (separate item below).
 
-### 🟢 OAuth 2.0 Token Exchange (RFC 8693)
+#### 🟢 Postgres backend (`PostgresIdentityStore`)
+
+Full implementation of the `IdentityStore` protocol backed by Postgres.
+The scaffold and table-schema design are documented in ADR-003.
+
+**Why:** identity data survives pod restarts; enables multi-instance
+deployments where all pods share the same identity store.
+
+**Effort:** ~150 LOC + schema migrations; `asyncpg` or `psycopg[async]`
+dependency; lifespan wiring for the connection pool.
+
+#### 🟡 Secret management (Vault)
+
+Pull secrets from HashiCorp Vault at startup. Config references a path
+(`vault://secret/mock-idp/clients`). Requires `hvac` as an optional
+dependency.
+
+**When to revisit:** when a team using Vault wants to avoid duplicating
+secrets into a ConfigMap.
+
+---
+
+### Protocol surface
+
+#### 🟢 Token introspection (RFC 7662)
+
+```text
+POST /{issuer}/introspect
+token=<jwt>
+client_id=<caller>
+client_secret=<secret>
+```
+
+Returns `{"active": true, "sub": ..., "scope": ...}` or
+`{"active": false}`.
+
+**Why:** gateways and upstream services that prefer to call back to the
+IdP rather than do local JWT validation. Also the prerequisite for
+meaningful token revocation testing.
+
+**Effort:** ~30 LOC + tests.
+
+#### 🟢 OAuth 2.0 Token Exchange (RFC 8693)
 
 Lets an intermediary (e.g., an API gateway) hand in an inbound token
 and get back a new token for a different audience, with the original
@@ -81,52 +118,24 @@ Resulting token: `sub` and `preferred_username` preserved from
 
 **Effort:** ~50 LOC + tests.
 
-### 🟢 Token introspection (RFC 7662)
+---
 
-```text
-POST /{issuer}/introspect
-token=<jwt>
-client_id=<caller>
-client_secret=<secret>
-```
+### Token fidelity
 
-Returns `{"active": true, "sub": ..., "scope": ...}` or
-`{"active": false}`.
-
-**Why:** for upstream services or gateway plugins that prefer to call
-back to the identity provider rather than do local JWT validation. Also
-useful for testing revocation scenarios.
-
-**Effort:** ~30 LOC + tests.
-
-### 🟢 Per-issuer signing keys
+#### 🟢 Per-issuer signing keys
 
 Each issuer path gets its own keypair. Currently all issuers share one
 signing key.
 
 **Why:** closer to real multi-tenant identity providers (each tenant has
-its own keys). Useful for testing JWKS-isolation correctness — confirm
-that a token from issuer A doesn't validate against issuer B's JWKS even
-if they have the same `kid`.
+its own keys). Tests JWKS-isolation correctness — confirms a token from
+issuer A doesn't validate against issuer B's JWKS even if they share a
+`kid`.
 
 **Effort:** ~25 LOC; change signing key from module-level to a
 per-issuer dict; update `/jwks` and signing helpers.
 
-### 🟢 Webhook on token issuance
-
-Configurable URL the mock POSTs to on every successful token issuance,
-with the request + token claims. Lets integration tests assert "what
-was issued" without scraping logs.
-
-```yaml
-webhooks:
-  - url: http://test-recorder.example.com/events
-    events: [token_issued]
-```
-
-**Effort:** ~30 LOC + tests; async HTTP client (httpx).
-
-### 🟢 Configurable signing algorithm per identity
+#### 🟢 Configurable signing algorithm per identity
 
 ```yaml
 clients:
@@ -140,14 +149,36 @@ clients:
 
 **Effort:** ~15 LOC; add `signing_alg` field; expand the key dict.
 
-### 🟢 Realm roles (Keycloak-influenced, optional)
+#### 🟢 Realm roles (Keycloak-influenced, optional)
 
-Tenant-level role assignments for directory-scoped roles (e.g. `Global.Reader`)
-that appear in every token regardless of audience. Merged alongside resource-scoped
-grants from the clients block.
+Tenant-level role assignments for directory-scoped roles (e.g.
+`Global.Reader`) that appear in every token regardless of audience.
+Merged alongside resource-scoped grants from the clients block.
 
-Deferred from v0.3 committed — no concrete test demand yet. When a use case arrives,
-the shape and merge logic are documented in ADR-002 §Decision.
+**Why:** closer to real directory models where some roles are
+tenant-wide, not per-resource. Deferred from v0.3 — no concrete test
+demand yet. Shape and merge logic are documented in ADR-002 §Decision.
+
+**Effort:** ~20 LOC.
+
+---
+
+### Observability / testing
+
+#### 🟢 Webhook on token issuance
+
+Configurable URL the mock POSTs to on every successful token issuance,
+with the request parameters and token claims. Lets integration tests
+assert "what was issued" without scraping logs.
+
+```yaml
+webhooks:
+  - url: http://test-recorder.example.com/events
+    events: [token_issued]
+```
+
+**Effort:** ~30 LOC + tests; `httpx` async client (already a dev
+dependency via `starlette`'s test client).
 
 ---
 
@@ -192,8 +223,8 @@ introspection / userinfo.
 If using JWT-validation-only (which most gateway OIDC plugins do),
 revocation doesn't bite — tokens are valid until `exp`.
 
-**When to revisit:** if introspection lands as v0.3 and you want to
-exercise the revocation → introspection path.
+**When to revisit:** once token introspection lands; revocation without
+introspection has limited test value.
 
 ### 🟡 OIDC end-session endpoint
 
@@ -222,7 +253,7 @@ JWKS handling.
 
 ### 🟡 Webhook delivery retries / dead-letter
 
-If webhooks land (see v0.3 candidates), eventually they fail.
+If webhooks land (see v0.4 candidates), eventually they fail.
 Production-grade behavior: retry, then DLQ.
 
 **When to revisit:** when webhook reliability becomes a real concern.
@@ -244,9 +275,9 @@ changes. Build only if the onboarding pain is real.
 
 A web form for adding/editing users at runtime without editing YAML.
 
-**Why maybe-never:** YAML editing + pod restart is fast enough for a
-test fixture. A UI doubles the surface area and adds an actual
-auth-and-authz problem to solve.
+**Why maybe-never:** YAML editing + hot-reload is now zero-friction. A
+UI doubles the surface area and adds an actual auth-and-authz problem to
+solve.
 
 ### 🔴 Multi-tenant simulation with separate user pools per issuer
 
@@ -272,82 +303,56 @@ Store issued tokens for replay-attack testing. Track revoked tokens
 across pod restarts.
 
 **Why maybe-never:** persistence drags in real ops concerns. For a test
-fixture, fresh-start-per-restart is ideal.
+fixture, fresh-start-per-restart is ideal. The Postgres backend (v0.4)
+makes this possible if the need ever becomes concrete.
 
 ---
 
-## Resolved (formerly questions)
+## Resolved
+
+### v0.3
 
 - ✓ **Tenant-keyed config schema (v0.2)** — `tid` hoisted from individual identity
   records to the grouping key. `users:` and `clients:` nest under
-  `tenants: {<tid>: {...}}`. Eliminates repeated `tid` on every record; enables
-  multi-tenant configs in a single file.
+  `tenants: {<tid>: {...}}`. Eliminates repeated `tid` on every record.
 - ✓ **Provider plugin architecture (v0.3)** — `providers/` module; dispatch by `provider:`
-  field on `TenantRecord` (default `entra_id`). Claim-shape emulation only, not full
-  flow emulation. See ADR-002.
+  field on `TenantRecord` (default `entra_id`). Claim-shape emulation only. See ADR-002.
 - ✓ **Entra ID rich grants model (v0.3)** — `service_principals:` for machine identities,
   `clients:` for resource apps with `grants:` per identity. `resolve_roles()` uses grants
-  table when a `ClientAppRecord` exists; falls back to flat `roles` otherwise. SP grants
-  resolve by original config name, not UUID alias. See ADR-002.
+  table when a `ClientAppRecord` exists; falls back to flat `roles` otherwise.
 - ✓ **Feature gates are implicit (v0.3)** — presence of `clients:` grants block activates
-  grants model; no explicit `features:` flag. Simple config stays simple.
+  grants model; no explicit `features:` flag.
 - ✓ **Playground update (v0.3.1)** — audience dropdown from `client_apps`,
   `service_principals` identity group, resolved-roles display per audience.
 - ✓ **Playground testing overrides + sig verification (v0.3.2)** — collapsible
-  "Testing overrides" panel with `X-Test-Expired` checkbox and `X-Omit-Claims` text
-  input; both headers reflected in the generated curl snippet. Signature verification
-  badge (`✓`/`✗`) in the JWT card, resolved asynchronously via `POST /debug/decode`.
-- ✓ **Admin `iss` override (v0.3.3)** — `override_iss_too: true` flag on an admin SP
-  unlocks overriding the `iss` claim via form body. Gated separately from `override_any_claim`
-  to prevent accidental footguns.
-- ✓ **Slow / failing endpoints (v0.3.4)** — `X-Test-Delay-Ms` sleeps before responding;
-  `X-Test-Fail` returns 500. Honored on `/token`, `/jwks`, and `/discovery`. Lets tests
-  exercise gateway timeout and retry behavior.
-- ✓ **Multi-key JWKS (v0.3.5)** — `/jwks` returns 3 keys: 1 active signing key (`mock-py-1`)
-  + 2 decoys (`mock-py-d1`, `mock-py-d2`). Tests gateway kid-based key selection.
-- ✓ **Per-issuer `auth_mode` (v0.3.6)** — `issuer_modes: {slug: lax|strict}` in config
-  overrides global `auth_mode` per issuer path. One mock can serve both lax and strict
-  test scenarios.
-- ✓ **Config pre-lint and better validation errors (v0.3.8)** — structural lint pass before
-  Pydantic catches common YAML mistakes (numeric passwords, SP nested under `users:`, key
-  typos). `ValidationError` formatted with location path and `Fix:` hints including
-  difflib "did you mean?" suggestions. `extra='forbid'` on `AppConfig` and `TenantRecord`
-  so unknown keys are hard errors.
-- ✓ **Pluggable identity store + config hot-reload (v0.3.9)** — `IdentityStore` protocol
-  in `store/` package; `YamlIdentityStore` is the default backend. `create_store()` factory
-  for future backends (Postgres, SQLite, etc.). `watchfiles` background task in `main.py`
-  reloads the config file on change — Kubernetes ConfigMap remounts are picked up within
-  the kubelet sync window with no pod restart. Reload failures preserve current state.
-  See ADR-003.
-- ✓ **Algorithm-failure negative endpoints (v0.3.7)** — two new POST endpoints:
-  `/{issuer}/token/unsigned` (alg:none, empty signature) and `/{issuer}/token/wrong-alg`
-  (HS256-signed with the RSA public key as HMAC secret). Auth and audience checks still
-  enforced; only the signing is adversarial. Playground exposes both as a token variant.
+  "Testing overrides" panel; signature verification badge via `POST /debug/decode`.
+- ✓ **Admin `iss` override (v0.3.3)** — `override_iss_too: true` flag on an admin SP.
+- ✓ **Slow / failing endpoints (v0.3.4)** — `X-Test-Delay-Ms` and `X-Test-Fail` headers.
+- ✓ **Multi-key JWKS (v0.3.5)** — 3 keys: 1 active + 2 decoys. Tests kid-based selection.
+- ✓ **Per-issuer `auth_mode` (v0.3.6)** — `issuer_modes: {slug: lax|strict}` in config.
+- ✓ **Algorithm-failure negative endpoints (v0.3.7)** — `token/unsigned` (alg:none) and
+  `token/wrong-alg` (HS256 confusion). Playground Token variant selector.
+- ✓ **Config pre-lint and better validation errors (v0.3.8)** — structural lint, difflib
+  "did you mean?" suggestions, `extra='forbid'` on `AppConfig` and `TenantRecord`.
+- ✓ **Pluggable identity store + config hot-reload (v0.3.9)** — `IdentityStore` protocol,
+  `YamlIdentityStore`, `create_store()` factory, `watchfiles` file watcher. ConfigMap
+  remounts picked up with no pod restart. See ADR-003.
 
-These were once open questions; resolved during v0.2 design:
+### v0.2 (historical)
 
-- ✓ **Password grant client_id** — optional. Provide it to populate
-  `appid`/`azp`; omit it for simpler tests.
-- ✓ **Resource parameter name** — accept both `resource` and `scope`;
-  `resource` wins; `/.default` suffix stripped from `scope`.
-- ✓ **Default `aud` when neither provided** — `api://default`.
-- ✓ **Lax / strict audience gating** — global config field;
-  per-identity `allowed_audiences`; admin bypasses.
-- ✓ **Token shape resolution priority** — header > suffix > config > v2.
-- ✓ **Mnemonic identity aliases** — supported via separate `client_id`
-  field on the entry.
-- ✓ **Per-identity token lifetime** — `token_lifetime_seconds` field.
-- ✓ **Extra claims** — `extra_claims` field merged verbatim into the token.
-- ✓ **Admin claim override** — `override_any_claim: true` flag;
-  form-body fields replace claims; reserved fields enforced; bypasses
-  strict audience.
-- ✓ **Admin key rotation** — `POST /admin/rotate-jwks` gated by
-  `X-Admin-Token`.
-- ✓ **Token playground** — `GET /` serves an HTML page.
-- ✓ **Debug endpoints** — `/debug/decode`, `/debug/identities`,
-  `/debug/config`.
-- ✓ **CORS** — middleware enabled by default; `cors_allow_origins`
-  configurable.
+- ✓ Password grant `client_id` optional.
+- ✓ `resource` and `scope` both accepted; `resource` wins; `/.default` stripped.
+- ✓ Default `aud` = `api://default`.
+- ✓ Lax / strict audience gating; per-identity `allowed_audiences`.
+- ✓ Token shape resolution: header > suffix > config > v2.
+- ✓ Mnemonic identity aliases via `client_id` field.
+- ✓ Per-identity `token_lifetime_seconds`.
+- ✓ `extra_claims` merged verbatim into the token.
+- ✓ Admin claim override (`override_any_claim: true`).
+- ✓ Admin key rotation (`POST /admin/rotate-jwks`).
+- ✓ Token playground (`GET /`).
+- ✓ Debug endpoints (`/debug/decode`, `/debug/identities`, `/debug/config`).
+- ✓ CORS middleware; `cors_allow_origins` configurable.
 
 ---
 
@@ -355,10 +360,8 @@ These were once open questions; resolved during v0.2 design:
 
 - Every roadmap item should land with: code, tests, a test-scenario doc
   entry, and a config schema update if applicable.
-- v0.3 items don't all need to ship together. Pull them in one at a
-  time, based on what tests actually demand.
-- If a parked item becomes a roadmap candidate, move it up (not delete
-  and re-add) so the discussion history is preserved.
+- Pull items in one at a time based on what tests actually demand.
+- If a parked item becomes a candidate, move it up (not delete and re-add)
+  so the discussion history is preserved.
 - If a maybe-never item gets a concrete use case, write the use case
-  down here before reclassifying — that way the next reviewer can see
-  *why* the bar moved.
+  down here before reclassifying.
