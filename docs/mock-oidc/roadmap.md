@@ -48,6 +48,17 @@ secrets into a ConfigMap.
 
 ---
 
+## Pro / Enterprise
+
+See [pro-enterprise.md](pro-enterprise.md) for the full strategy, tier
+breakdown, and build sequence. Highest-priority items:
+
+- **Hosted mock endpoint** — zero-setup SaaS; slug-based routing; first Pro feature
+- **Token audit log** — every `/token` call stored; queryable via UI + API
+- **Web admin UI** — depends on Postgres backend (v0.4.0 already shipped)
+
+---
+
 ## Parked
 
 ### 🟡 ID token issuance (`id_token` alongside `access_token`)
@@ -108,6 +119,18 @@ value is limited.
 
 **When to revisit:** if you start using cert-based client auth in
 production.
+
+### 🟡 Self-hosted CI runner on Proxmox k3s
+
+Deploy a self-hosted GitHub Actions runner onto a k3s cluster running on
+Proxmox in the lab. Enables a full cluster smoke test in CI:
+deploy manifest → port-forward → hit endpoints → assert token claims.
+
+**Why parked:** requires stable Proxmox k3s setup and GitHub runner registration.
+The Docker-based smoke test in the current CI (issue #30) covers the critical path.
+
+**When to revisit:** when the Proxmox k3s setup is operational. See
+[pro-enterprise.md](pro-enterprise.md) for the broader infrastructure plan.
 
 ### 🟡 Configurable Cache-Control on JWKS and discovery
 
@@ -175,6 +198,19 @@ makes this possible if the need ever becomes concrete.
 ---
 
 ## Resolved
+
+### CI / infrastructure
+
+- ✓ **Docker smoke test gates image push (issue #30)** — CI builds image
+  locally (`load: true, push: false`), runs `/healthz` + password grant +
+  client_credentials grant against the container. Image is tagged and pushed
+  only if all three pass. Trivy scans the locally built image. Eliminates the
+  v0.5.2/v0.5.3 class of bugs where a startup crash reached `:latest`.
+- ✓ **Playground bug: all app roles shown in role selector (issue #29)** —
+  `renderRoleCheckboxes(availableRoles, checkedRoles)` now renders every role
+  defined on the client app, with granted roles pre-checked and non-granted
+  roles unchecked (available for negative testing). Previously only the
+  identity's own grants appeared.
 
 ### v0.5
 
