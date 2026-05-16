@@ -28,6 +28,12 @@ tenants:
   22222222-2222-2222-2222-222222222222:
     provider: entra_id
 
+    # realm_roles: applied to EVERY identity in this tenant, regardless of audience.
+    # Simulates Keycloak realm roles or Entra ID directory-scoped roles.
+    # realm_roles:
+    #   - offline_access
+    #   - uma_authorization
+
     users:
       alice:
         # password also accepts a secret reference:
@@ -36,6 +42,9 @@ tenants:
         # password:
         #   from_file: /var/run/secrets/alice-pw
         password: alice-pw
+        # realm_roles: roles always in alice's token, any audience (identity-level)
+        # realm_roles:
+        #   - User.Admin
         upn: alice@example.com
         preferred_username: alice@example.com
         oid: 11111111-1111-1111-1111-aaaaaaaaaaaa

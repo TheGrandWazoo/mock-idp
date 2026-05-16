@@ -292,13 +292,17 @@ class YamlIdentityStore:
         new_apps: dict[str, ClientAppRecord] = {}
 
         for tid, tenant in cfg.tenants.items():
+            tenant_realm_roles = list(tenant.realm_roles)
+
             for username, user in tenant.users.items():
                 user.tid = tid
+                user._tenant_realm_roles = tenant_realm_roles
                 new_users[username] = user
 
             for key, sp in tenant.service_principals.items():
                 sp.tid = tid
                 sp._name = key
+                sp._tenant_realm_roles = tenant_realm_roles
                 canonical = sp.client_id or key
                 sp._canonical_id = canonical
                 new_sps[key] = sp

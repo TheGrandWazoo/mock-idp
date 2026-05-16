@@ -12,6 +12,8 @@ class UserRecord(BaseModel):
     token_version: str = "v2"
     token_lifetime_seconds: int = 3600
     signing_alg: str = "RS256"
+    realm_roles: list[str] = []  # always in token, any audience (identity-level)
+    _tenant_realm_roles: list[str] = PrivateAttr(default_factory=list)  # injected from tenant
     roles: list[str] = []  # fallback when no client-app grants are configured
     groups: list[str] = []
     allowed_audiences: list[str] = []
@@ -48,6 +50,8 @@ class ServicePrincipalRecord(BaseModel):
     token_version: str = "v1"
     token_lifetime_seconds: int = 3600
     signing_alg: str = "RS256"
+    realm_roles: list[str] = []  # always in token, any audience (identity-level)
+    _tenant_realm_roles: list[str] = PrivateAttr(default_factory=list)  # injected from tenant
     roles: list[str] = []  # fallback when no client-app grants are configured
     groups: list[str] = []
     tid: str = ""  # injected from tenant key at load time
@@ -91,6 +95,7 @@ class TenantRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     provider: str = "entra_id"
+    realm_roles: list[str] = []  # applied to every identity in this tenant
     users: dict[str, UserRecord] = {}
     service_principals: dict[str, ServicePrincipalRecord] = {}
     clients: dict[str, ClientAppRecord] = {}  # resource apps keyed by audience URI

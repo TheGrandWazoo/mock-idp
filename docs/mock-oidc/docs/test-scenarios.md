@@ -1,6 +1,6 @@
 # Test Scenarios — Python Mock OIDC
 
-Concrete request/response patterns for the v0.5.4 surface area. Use these
+Concrete request/response patterns for the v0.5.5 surface area. Use these
 as the basis for a regression suite, ad-hoc curl tests, or gateway
 integration tests.
 
@@ -1260,6 +1260,84 @@ token was issued before the server was last restarted (new keys on each start).
 
 ---
 
+## Realm roles (v0.5.5)
+
+### S82 — Identity-level realm_roles always in token
+
+**What this is / why you'd use it:** Simulate directory-scoped roles (e.g. Entra ID
+`Global.Reader`) that appear in every token for that identity, regardless of which
+API resource (`aud`) is requested.
+
+```yaml
+users:
+  alice:
+    realm_roles: [Global.Reader]
+    # ...rest of alice's config
+```
+
+```bash
+# Token for api://serviceB — includes Global.Reader
+curl -X POST http://mock-idp.example.com/default/token \
+  -d "grant_type=password&username=alice&password=alice-pw&resource=api://serviceB"
+
+# Token for api://serviceC — also includes Global.Reader
+curl -X POST http://mock-idp.example.com/default/token \
+  -d "grant_type=password&username=alice&password=alice-pw&resource=api://serviceC"
+```
+
+`roles` claim contains `["Global.Reader", ...audience-specific-roles...]`.
+
+---
+
+### S83 — Tenant-level realm_roles for all identities
+
+**What this is / why you'd use it:** Simulate Keycloak realm roles — roles assigned
+at the realm (tenant) level that every identity carries, regardless of who they are
+or which audience they're requesting.
+
+```yaml
+tenants:
+  22222222-2222-2222-2222-222222222222:
+    realm_roles: [offline_access, uma_authorization]
+    users:
+      alice:
+        realm_roles: [User.Admin]    # alice gets tenant + identity realm_roles
+      bob:
+        password: bob-pw             # bob gets only tenant realm_roles
+```
+
+Alice's token `roles`: `["offline_access", "uma_authorization", "User.Admin", ...audience-roles...]`
+Bob's token `roles`: `["offline_access", "uma_authorization", ...audience-roles...]`
+
+---
+
+### S84 — Merge order and deduplication
+
+**What this is / why you'd use it:** Verifying that the three layers merge correctly
+without duplicates when the same role appears in multiple layers.
+
+Merge order (first occurrence wins):
+```
+roles = dedupe(tenant.realm_roles + identity.realm_roles + audience_specific_roles)
+```
+
+If `tenant.realm_roles = ["shared"]` and `identity.realm_roles = ["shared", "extra"]`:
+- `"shared"` appears once (from tenant)
+- `"extra"` appears once (from identity)
+- Audience-specific roles are appended after
+
+**Troubleshooting:**
+
+- Realm roles not appearing → confirm the field name is `realm_roles` (not `realmRoles`
+  or `realm-roles`). Pydantic's `extra='forbid'` will reject unknown field names with a
+  clear startup error.
+- Tenant realm_roles not applied after hot-reload → trigger `POST /admin/reload-config`
+  and confirm the reload log shows the updated identity count.
+- `X-Override-Roles` header overrides the entire merged list (realm + identity +
+  audience). Use it to test specific combinations without editing config.
+
+---
+
 ## Secret references — from_env / from_file (v0.5.4)
 
 ### S79 — Load admin token from an environment variable
@@ -1429,5 +1507,6 @@ Navigate to `GET /` and:
 | Webhook on token issuance | S72–S75 |
 | Role override (X-Override-Roles) | S76–S78 |
 | Secret references (from_env / from_file) | S79–S81 |
+| Realm roles | S82–S84 |
 
-That is the full v0.5.4 surface area.
+That is the full v0.5.5 surface area.

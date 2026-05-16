@@ -179,7 +179,8 @@ password and secret fields as `"***"` regardless of how they were loaded.
 | `token_version` | `v1` or `v2`. Default token shape. |
 | `token_lifetime_seconds` | Default expiry. Falls back to 3600. |
 | `signing_alg` | `RS256` (default) or `ES256`. Algorithm used to sign tokens for this identity. |
-| `roles`, `groups` | List claims. |
+| `realm_roles` | Tenant-scoped roles always included in the token regardless of audience. Merged with per-audience grants. |
+| `roles`, `groups` | List claims. `roles` is the fallback when no per-audience grant is configured. |
 | `allowed_audiences` | Required in strict mode; ignored in lax. |
 | `extra_claims` | Free-form dict merged verbatim into the issued token. |
 
@@ -192,8 +193,55 @@ password and secret fields as `"***"` regardless of how they were loaded.
 | `label` | Human-readable; never appears in tokens. |
 | `token_version`, `token_lifetime_seconds` | Same semantics as on users. |
 | `signing_alg` | `RS256` (default) or `ES256`. |
+| `realm_roles` | Same as on users. |
 | `roles`, `groups`, `tid`, `allowed_audiences`, `extra_claims` | Same as users. |
 | `override_any_claim` | When `true`, form-body fields replace token claims and the strict audience check is bypassed. |
+
+**Tenants**
+
+| Field | Purpose |
+|---|---|
+| `provider` | Claim-shape provider. Currently only `entra_id` (default). |
+| `realm_roles` | Roles applied to **every** identity in this tenant for every token. Merged before per-identity `realm_roles` and per-audience grants. |
+| `users` | Map of username → `UserRecord`. |
+| `service_principals` | Map of key → `ServicePrincipalRecord`. |
+| `clients` | Map of audience URI → `ClientAppRecord`. |
+
+### Realm roles
+
+```yaml
+tenants:
+  22222222-2222-2222-2222-222222222222:
+    realm_roles: [offline_access, uma_authorization]   # every identity in this tenant
+
+    users:
+      alice:
+        realm_roles: [User.Admin]   # alice only, on top of tenant realm_roles
+        roles: [technician]         # fallback when no per-audience grant is configured
+
+    service_principals:
+      service-a:
+        realm_roles: [Automation.Base]
+```
+
+The `roles` claim in the issued token is built by merging three layers, in order,
+with duplicates removed:
+
+```
+roles = dedupe(tenant.realm_roles + identity.realm_roles + audience_specific_roles)
+```
+
+`audience_specific_roles` comes from the `clients:` grants table for the requested
+audience, or from the identity's flat `roles` list if no matching `ClientAppRecord`
+exists.
+
+**When to use tenant realm_roles vs identity realm_roles:**
+
+- `tenant.realm_roles` — roles that every identity in the tenant always carries
+  (e.g. `offline_access` in a Keycloak realm, or a baseline `authenticated_user`
+  role in a custom system).
+- `identity.realm_roles` — directory-scoped roles assigned to specific identities
+  (e.g. `Global.Reader` for a service account, `User.Admin` for an admin user).
 
 ### Mnemonic aliases
 

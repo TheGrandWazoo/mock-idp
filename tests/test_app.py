@@ -1220,6 +1220,94 @@ def test_discovery_advertises_both_algorithms(client):
     assert "ES256" in algs
 
 
+# ── Realm roles ────────────────────────────────────────────────────────────
+
+
+def test_identity_realm_roles_always_in_token(client):
+    """identity.realm_roles appear in the token regardless of audience."""
+    import mock_idp.config as m
+    alice = m.USERS["alice"]
+    original = list(alice.realm_roles)
+    alice.realm_roles = ["Global.Reader"]
+    try:
+        r = client.post(
+            "/default/token",
+            data={"grant_type": "password", "username": "alice", "password": "alice-pw",
+                  "resource": "api://serviceB"},
+        )
+        assert r.status_code == 200
+        payload = _decode_payload(r.json()["access_token"])
+        assert "Global.Reader" in payload["roles"]
+    finally:
+        alice.realm_roles = original
+
+
+def test_tenant_realm_roles_applied_to_all_identities(client):
+    """_tenant_realm_roles are injected on all identities and appear in every token."""
+    import mock_idp.config as m
+    alice = m.USERS["alice"]
+    original = list(alice._tenant_realm_roles)
+    alice._tenant_realm_roles = ["offline_access"]
+    try:
+        r = client.post(
+            "/default/token",
+            data={"grant_type": "password", "username": "alice", "password": "alice-pw",
+                  "resource": "api://serviceB"},
+        )
+        assert r.status_code == 200
+        payload = _decode_payload(r.json()["access_token"])
+        assert "offline_access" in payload["roles"]
+    finally:
+        alice._tenant_realm_roles = original
+
+
+def test_realm_roles_merge_order_and_dedup(client):
+    """Merge order: tenant → identity → audience; duplicates dropped (first wins)."""
+    import mock_idp.config as m
+    alice = m.USERS["alice"]
+    orig_tenant = list(alice._tenant_realm_roles)
+    orig_realm = list(alice.realm_roles)
+    alice._tenant_realm_roles = ["shared-role", "tenant-only"]
+    alice.realm_roles = ["shared-role", "identity-only"]
+    try:
+        r = client.post(
+            "/default/token",
+            data={"grant_type": "password", "username": "alice", "password": "alice-pw",
+                  "resource": "api://serviceB"},
+        )
+        assert r.status_code == 200
+        payload = _decode_payload(r.json()["access_token"])
+        roles = payload["roles"]
+        # shared-role appears exactly once
+        assert roles.count("shared-role") == 1
+        # order: tenant roles come before identity roles
+        assert roles.index("tenant-only") < roles.index("identity-only")
+        assert "tenant-only" in roles
+        assert "identity-only" in roles
+    finally:
+        alice._tenant_realm_roles = orig_tenant
+        alice.realm_roles = orig_realm
+
+
+def test_realm_roles_on_service_principal(client):
+    """realm_roles on a service principal appear in the client_credentials token."""
+    import mock_idp.config as m
+    sp = m.SERVICE_PRINCIPALS["service-a"]
+    original = list(sp.realm_roles)
+    sp.realm_roles = ["Automation.Base"]
+    try:
+        r = client.post(
+            "/default/token",
+            data={"grant_type": "client_credentials", "client_id": "service-a",
+                  "client_secret": "serviceA-secret", "resource": "api://serviceB"},
+        )
+        assert r.status_code == 200
+        payload = _decode_payload(r.json()["access_token"])
+        assert "Automation.Base" in payload["roles"]
+    finally:
+        sp.realm_roles = original
+
+
 # ── Secret references (from_env / from_file) ──────────────────────────────
 
 

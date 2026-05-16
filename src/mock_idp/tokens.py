@@ -73,19 +73,29 @@ def resolve_expiry(default: int, headers: dict) -> int:
 def resolve_roles(identity_key: str, identity: UserRecord | ServicePrincipalRecord, aud: str) -> list[str]:
     """Resolve roles for the requested audience.
 
-    Uses the client-app grants table when a matching ClientAppRecord exists;
-    falls back to the flat roles list on the identity otherwise.
+    Merges three layers in order (duplicates removed, first occurrence wins):
+      1. Tenant realm_roles   — injected at load time onto identity._tenant_realm_roles
+      2. Identity realm_roles — identity.realm_roles (always included, any audience)
+      3. Audience roles       — grants table if a ClientAppRecord exists, else identity.roles
     """
     app = _cfg.CLIENT_APPS.get(aud)
     if app is not None:
-        # SPs look up grants by their original config name, not by UUID alias
         grants_key = (
             identity._name
             if isinstance(identity, ServicePrincipalRecord) and identity._name
             else identity_key
         )
-        return list(app.grants.get(grants_key, []))
-    return list(identity.roles)
+        audience_roles = list(app.grants.get(grants_key, []))
+    else:
+        audience_roles = list(identity.roles)
+
+    seen: set[str] = set()
+    result: list[str] = []
+    for r in (identity._tenant_realm_roles + list(identity.realm_roles) + audience_roles):
+        if r not in seen:
+            seen.add(r)
+            result.append(r)
+    return result
 
 
 def check_audience(

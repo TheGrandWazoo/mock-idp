@@ -3,7 +3,7 @@
 What's not yet shipped, what's worth doing next, and what's parked unless a
 specific need surfaces.
 
-Current release is **v0.5.4**. The v0.3 surface is documented in ADR-002 and
+Current release is **v0.5.5**. The v0.3 surface is documented in ADR-002 and
 ADR-003. The v0.4 surface is documented in ADR-003 (Postgres backend) and the
 commit history. The v0.5 surface is documented in ADR-004 (per-issuer signing
 keys) and the commit history.
@@ -41,18 +41,6 @@ secrets into a ConfigMap.
 ---
 
 ### Token fidelity
-
-#### 🟢 Realm roles (Keycloak-influenced, optional)
-
-Tenant-level role assignments for directory-scoped roles (e.g.
-`Global.Reader`) that appear in every token regardless of audience.
-Merged alongside resource-scoped grants from the clients block.
-
-**Why:** closer to real directory models where some roles are
-tenant-wide, not per-resource. Deferred from v0.3 — no concrete test
-demand yet. Shape and merge logic are documented in ADR-002 §Decision.
-
-**Effort:** ~20 LOC.
 
 ---
 
@@ -190,6 +178,11 @@ makes this possible if the need ever becomes concrete.
 
 ### v0.5
 
+- ✓ **Realm roles (v0.5.5, issue #20)** — `realm_roles` on `TenantRecord` (applies
+  to all identities in the tenant) and on `UserRecord` / `ServicePrincipalRecord`
+  (per-identity). `resolve_roles()` merges: `tenant.realm_roles + identity.realm_roles
+  + audience_specific_roles`, deduped, first-occurrence wins. Works with
+  `X-Override-Roles` override (replaces the full merged list). 4 new tests (S82–S84).
 - ✓ **Secret management — from_env / from_file (v0.5.4, issue #27)** —
   `admin_token`, user `password`, and SP `secret` fields accept
   `{from_env: VAR}` or `{from_file: /path}` in addition to plain strings.
