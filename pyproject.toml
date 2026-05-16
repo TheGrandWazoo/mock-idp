@@ -22,7 +22,7 @@ postgres = [
 
 [dependency-groups]
 dev = [
-    "ruff==0.15.12",
+    "ruff==0.15.13",
     "pytest==9.0.3",
 ]
 
