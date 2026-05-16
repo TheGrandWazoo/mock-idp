@@ -763,7 +763,6 @@ def test_introspect_claims_passthrough(client):
 
 
 def test_introspect_expired_token(client):
-    token = _issue_token(client)
     # Manually backdate the exp claim to simulate expiry via a fresh token with X-Test-Expired.
     r = client.post(
         "/default/token",
