@@ -1,6 +1,6 @@
 # Test Scenarios — Python Mock OIDC
 
-Concrete request/response patterns for the v0.5.0 surface area. Use these
+Concrete request/response patterns for the v0.5.1 surface area. Use these
 as the basis for a regression suite, ad-hoc curl tests, or gateway
 integration tests.
 
@@ -627,16 +627,16 @@ gateways can validate tokens signed by any generation of key during a rotation w
 Gateways should select the key whose `kid` matches the token header — not blindly try
 every key in the JWKS. These scenarios confirm that behavior.
 
-### S50 — JWKS returns three keys
+### S50 — JWKS returns four keys
 
 ```bash
-curl http://mock-idp.example.com/default/jwks | jq '.keys | length'
+curl http://mock-idp.example.com/default/jwks | jq '[.keys[] | {kid, kty}]'
 ```
 
-Returns `3`. One active signing key (kid `mock-default-1`) followed by two decoys
-(`mock-default-d1`, `mock-default-d2`). A gateway that selects by `kid` will correctly
-use only the active key; a gateway that blindly tries every key may accept tokens signed
-by any of them.
+Returns 4 keys: one RSA signing key (`mock-default-1`, `kty: RSA`), one EC signing key
+(`mock-default-ec-1`, `kty: EC`), and two RSA decoys (`mock-default-d1`, `mock-default-d2`).
+A gateway that selects by `kid` will correctly use the key matching the token header; a
+gateway that blindly tries every key may accept tokens signed by any of them.
 
 ---
 
@@ -961,10 +961,10 @@ trivially because all JWKS responses are identical.
 
 ```bash
 curl http://mock-idp.example.com/tenant-a/jwks | jq '[.keys[].kid]'
-# ["mock-tenant-a-1", "mock-tenant-a-d1", "mock-tenant-a-d2"]
+# ["mock-tenant-a-1", "mock-tenant-a-ec-1", "mock-tenant-a-d1", "mock-tenant-a-d2"]
 
 curl http://mock-idp.example.com/tenant-b/jwks | jq '[.keys[].kid]'
-# ["mock-tenant-b-1", "mock-tenant-b-d1", "mock-tenant-b-d2"]
+# ["mock-tenant-b-1", "mock-tenant-b-ec-1", "mock-tenant-b-d1", "mock-tenant-b-d2"]
 ```
 
 No kid overlap between the two sets.
@@ -1045,6 +1045,128 @@ Useful for confirming rotation state across a multi-issuer test run.
 
 ---
 
+## Configurable signing algorithm per identity (v0.5.1)
+
+**What this is:** Each identity (user or service principal) can specify
+`signing_alg: RS256` (default) or `signing_alg: ES256`. The mock issues tokens
+signed with the corresponding key — RSA-2048 for RS256, EC P-256 for ES256 — and
+publishes both keys in its JWKS. This lets you confirm that your gateway's JWT
+validator handles a multi-algorithm JWKS correctly.
+
+**Why you'd use it:** Real identity providers sometimes serve a mix of RSA and EC
+keys. A gateway configured to only accept RS256 will reject EC-signed tokens even
+if the signature is valid. These scenarios let you catch that misconfiguration
+before it hits production.
+
+### S67 — ES256 token has `alg: ES256` and an EC `kid`
+
+Config (`service-b` in `config.example.yaml`):
+
+```yaml
+service-b:
+  signing_alg: ES256
+```
+
+```bash
+TOKEN=$(curl -s -X POST http://mock-idp.example.com/default/token \
+  -d "grant_type=client_credentials&client_id=service-b" \
+  -d "client_secret=serviceB-secret&resource=api://serviceC" \
+  | jq -r .access_token)
+
+# Inspect the JWT header
+echo $TOKEN | cut -d. -f1 | base64 -d 2>/dev/null | jq .
+```
+
+Header:
+
+```json
+{"alg": "ES256", "typ": "JWT", "kid": "mock-default-ec-1"}
+```
+
+The `kid` matches the EC key in `/jwks`; the gateway must select that key for
+verification, not the RSA signing key.
+
+### S68 — JWKS contains both RSA and EC keys
+
+```bash
+curl http://mock-idp.example.com/default/jwks | jq '[.keys[] | {kid, kty, crv}]'
+```
+
+Response:
+
+```json
+[
+  {"kid": "mock-default-1",    "kty": "RSA"},
+  {"kid": "mock-default-ec-1", "kty": "EC", "crv": "P-256"},
+  {"kid": "mock-default-d1",   "kty": "RSA"},
+  {"kid": "mock-default-d2",   "kty": "RSA"}
+]
+```
+
+A gateway that only accepts RSA keys from JWKS (i.e., ignores EC entries) will
+fail to verify service-b's ES256 tokens.
+
+### S69 — RS256 identity unaffected by ES256 config
+
+```bash
+TOKEN=$(curl -s -X POST http://mock-idp.example.com/default/token \
+  -d "grant_type=client_credentials&client_id=service-a" \
+  -d "client_secret=serviceA-secret&resource=api://serviceB" \
+  | jq -r .access_token)
+
+echo $TOKEN | cut -d. -f1 | base64 -d 2>/dev/null | jq .alg
+# "RS256"
+```
+
+`service-a` uses the default `RS256`; adding ES256 to `service-b` does not change
+other identities.
+
+### S70 — Discovery advertises both algorithms
+
+```bash
+curl http://mock-idp.example.com/default/.well-known/openid-configuration \
+  | jq .id_token_signing_alg_values_supported
+# ["RS256", "ES256"]
+```
+
+Gateways that validate the discovery document's `alg_values_supported` list before
+accepting tokens must accept both values.
+
+### S71 — ES256 token verifies successfully against published JWKS
+
+Fetch the JWKS and verify the ES256 token:
+
+```bash
+TOKEN=$(... service-b token as in S67 ...)
+
+curl -X POST http://mock-idp.example.com/debug/decode \
+  -H "Content-Type: application/json" \
+  -d "{\"token\": \"$TOKEN\"}"
+```
+
+Response includes `"signature_validated_against_published_key": true`.
+
+If the debug endpoint returns `false`, the EC key is missing from the JWKS or the
+token was issued before the server was last restarted (new keys on each start).
+
+**Troubleshooting:**
+
+- Gateway returns 401 for an ES256 token but RS256 tokens pass → the gateway's
+  JWKS client is either filtering out EC keys or the gateway's allowed-algorithms
+  list is restricted to RS256 only. Check both the JWKS-parsing code and the
+  algorithm-allowlist configuration.
+- `signing_alg` field rejected at config load → must be exactly `"RS256"` or
+  `"ES256"` (case-sensitive). Any other value raises a Pydantic validation error and
+  the server will refuse to start.
+- ES256 token header shows kid `mock-default-ec-1` but gateway can't find it in
+  JWKS → confirm the gateway is fetching from the correct issuer path. Each issuer
+  has its own EC key; `/tenant-a/jwks` and `/tenant-b/jwks` have different kids.
+- EC token fails `introspect` → the introspect endpoint uses the same JWKS for
+  verification. If `{"active": false}` is returned for a valid ES256 token, confirm
+  the request goes to the same issuer path that minted the token.
+
+---
+
 ## Coverage summary
 
 | Area | Scenarios |
@@ -1071,6 +1193,7 @@ Useful for confirming rotation state across a multi-issuer test run.
 | Token introspection (RFC 7662) | S55–S58 |
 | Token Exchange (RFC 8693) | S59–S62 |
 | Per-issuer signing key isolation | S63–S66 |
+| Configurable signing algorithm | S67–S71 |
 
-That is the full v0.5.0 surface area. Anything not covered here is either
+That is the full v0.5.1 surface area. Anything not covered here is either
 a v0.4 roadmap item (token introspection, token exchange, config hot-reload, etc.) or out of scope.

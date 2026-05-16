@@ -3,7 +3,7 @@
 What's not yet shipped, what's worth doing next, and what's parked unless a
 specific need surfaces.
 
-Current release is **v0.5.0**. The v0.3 surface is documented in ADR-002 and
+Current release is **v0.5.1**. The v0.3 surface is documented in ADR-002 and
 ADR-003. The v0.4 surface is documented in ADR-003 (Postgres backend) and the
 commit history. The v0.5 surface is documented in ADR-004 (per-issuer signing
 keys) and the commit history.
@@ -66,20 +66,6 @@ secrets into a ConfigMap.
 ---
 
 ### Token fidelity
-
-#### 🟢 Configurable signing algorithm per identity
-
-```yaml
-clients:
-  service-a:
-    signing_alg: RS256       # default
-  service-b:
-    signing_alg: ES256       # different curve for alg-agility testing
-```
-
-**Why:** confirm the gateway handles multi-alg JWKS gracefully.
-
-**Effort:** ~15 LOC; add `signing_alg` field; expand the key dict.
 
 #### 🟢 Realm roles (Keycloak-influenced, optional)
 
@@ -244,6 +230,13 @@ makes this possible if the need ever becomes concrete.
 
 ### v0.5
 
+- ✓ **Configurable signing algorithm per identity (v0.5.1)** — `signing_alg: RS256`
+  (default) or `signing_alg: ES256` on any user or service principal. Each issuer
+  now also holds an EC P-256 keypair alongside the RSA-2048 pair; JWKS publishes
+  both signing keys (4 keys total: RSA signing, EC signing, 2 RSA decoys). `sign()`
+  auto-detects the algorithm from the key type. Discovery advertises
+  `["RS256", "ES256"]`. `config.example.yaml` sets `service-b` to ES256. 5 new tests.
+  See S67–S71 in test-scenarios.md.
 - ✓ **Per-issuer signing keys (v0.5.0)** — each issuer path now has its own RSA-2048
   keypair (signing + unpublished alt + 2 decoys), created lazily on first use.
   `/{issuer}/jwks` returns only that issuer's keys. `POST /admin/rotate-jwks?issuer=<slug>`

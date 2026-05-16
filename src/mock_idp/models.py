@@ -11,6 +11,7 @@ class UserRecord(BaseModel):
     tid: str = ""  # injected from tenant key at load time
     token_version: str = "v2"
     token_lifetime_seconds: int = 3600
+    signing_alg: str = "RS256"
     roles: list[str] = []  # fallback when no client-app grants are configured
     groups: list[str] = []
     allowed_audiences: list[str] = []
@@ -28,6 +29,13 @@ class UserRecord(BaseModel):
             raise ValueError("token_version must be 'v1' or 'v2'")
         return v
 
+    @field_validator("signing_alg")
+    @classmethod
+    def _valid_signing_alg(cls, v: str) -> str:
+        if v not in ("RS256", "ES256"):
+            raise ValueError("signing_alg must be 'RS256' or 'ES256'")
+        return v
+
 
 class ServicePrincipalRecord(BaseModel):
     """Machine identity that requests tokens (client_credentials grant)."""
@@ -39,6 +47,7 @@ class ServicePrincipalRecord(BaseModel):
     label: Optional[str] = None
     token_version: str = "v1"
     token_lifetime_seconds: int = 3600
+    signing_alg: str = "RS256"
     roles: list[str] = []  # fallback when no client-app grants are configured
     groups: list[str] = []
     tid: str = ""  # injected from tenant key at load time
@@ -59,6 +68,13 @@ class ServicePrincipalRecord(BaseModel):
     def _valid_version(cls, v: str) -> str:
         if v not in ("v1", "v2"):
             raise ValueError("token_version must be 'v1' or 'v2'")
+        return v
+
+    @field_validator("signing_alg")
+    @classmethod
+    def _valid_signing_alg(cls, v: str) -> str:
+        if v not in ("RS256", "ES256"):
+            raise ValueError("signing_alg must be 'RS256' or 'ES256'")
         return v
 
 

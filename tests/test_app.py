@@ -48,8 +48,10 @@ def test_jwks(client):
     r = client.get("/default/jwks")
     assert r.status_code == 200
     keys = r.json()["keys"]
-    assert len(keys) == 3
-    assert all(k["kty"] == "RSA" for k in keys)
+    assert len(keys) == 4  # RSA signing, EC signing, 2 RSA decoys
+    ktypes = {k["kty"] for k in keys}
+    assert "RSA" in ktypes
+    assert "EC" in ktypes
 
 
 def test_jwks_active_kid_matches_token(client):
@@ -1032,6 +1034,72 @@ def test_admin_rotate_single_issuer_does_not_affect_others(client):
     for issuer, kid in kids_before.items():
         if issuer != "default":
             assert kids_after[issuer] == kid
+
+
+# ── Configurable signing algorithm (RS256 / ES256) ────────────────────────
+
+
+def test_es256_token_has_correct_alg_header(client):
+    """service-b is configured with signing_alg: ES256 — alg header must reflect that."""
+    r = client.post(
+        "/default/token",
+        data={"grant_type": "client_credentials", "client_id": "service-b",
+              "client_secret": "serviceB-secret", "resource": "api://serviceC"},
+    )
+    assert r.status_code == 200
+    header = json.loads(b64urlDecode_str(r.json()["access_token"].split(".")[0]))
+    assert header["alg"] == "ES256"
+
+
+def test_es256_token_kid_matches_ec_key_in_jwks(client):
+    """The kid in an ES256 token must match the EC key published in /jwks."""
+    r = client.post(
+        "/default/token",
+        data={"grant_type": "client_credentials", "client_id": "service-b",
+              "client_secret": "serviceB-secret", "resource": "api://serviceC"},
+    )
+    token = r.json()["access_token"]
+    header = json.loads(b64urlDecode_str(token.split(".")[0]))
+    token_kid = header["kid"]
+
+    jwks_keys = client.get("/default/jwks").json()["keys"]
+    ec_keys = [k for k in jwks_keys if k["kty"] == "EC"]
+    assert any(k["kid"] == token_kid for k in ec_keys)
+
+
+def test_es256_token_verifies_against_published_jwks(client):
+    """An ES256 token must verify successfully using the published JWKS."""
+    from mock_idp.keys import get_jwks_keys
+    from mock_idp.tokens import verify_token
+
+    r = client.post(
+        "/default/token",
+        data={"grant_type": "client_credentials", "client_id": "service-b",
+              "client_secret": "serviceB-secret", "resource": "api://serviceC"},
+    )
+    token = r.json()["access_token"]
+    claims = verify_token(token, get_jwks_keys("default"))
+    assert claims is not None
+    assert claims["appid"] == "02020202-2020-2020-2020-bbbbbbbbbbbb"
+
+
+def test_rs256_identity_unaffected_by_es256_config(client):
+    """service-a uses default RS256 — adding ES256 elsewhere must not affect it."""
+    r = client.post(
+        "/default/token",
+        data={"grant_type": "client_credentials", "client_id": "service-a",
+              "client_secret": "serviceA-secret", "resource": "api://serviceB"},
+    )
+    token = r.json()["access_token"]
+    header = json.loads(b64urlDecode_str(token.split(".")[0]))
+    assert header["alg"] == "RS256"
+
+
+def test_discovery_advertises_both_algorithms(client):
+    r = client.get("/default/.well-known/openid-configuration")
+    algs = r.json()["id_token_signing_alg_values_supported"]
+    assert "RS256" in algs
+    assert "ES256" in algs
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

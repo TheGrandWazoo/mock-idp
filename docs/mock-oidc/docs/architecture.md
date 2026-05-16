@@ -134,11 +134,12 @@ clients:
 | `tid` | Tenant ID. Defaults if omitted. |
 | `token_version` | `v1` or `v2`. Default token shape. |
 | `token_lifetime_seconds` | Default expiry. Falls back to 3600. |
+| `signing_alg` | `RS256` (default) or `ES256`. Algorithm used to sign tokens for this identity. |
 | `roles`, `groups` | List claims. |
 | `allowed_audiences` | Required in strict mode; ignored in lax. |
 | `extra_claims` | Free-form dict merged verbatim into the issued token. |
 
-**Clients**
+**Clients / Service Principals**
 
 | Field | Purpose |
 |---|---|
@@ -146,6 +147,7 @@ clients:
 | `secret` | Strict equality check on `grant_type=client_credentials`. |
 | `label` | Human-readable; never appears in tokens. |
 | `token_version`, `token_lifetime_seconds` | Same semantics as on users. |
+| `signing_alg` | `RS256` (default) or `ES256`. |
 | `roles`, `groups`, `tid`, `allowed_audiences`, `extra_claims` | Same as users. |
 | `override_any_claim` | When `true`, form-body fields replace token claims and the strict audience check is bypassed. |
 
@@ -389,33 +391,61 @@ Credentials: not allowed (the mock issues bearer tokens, not cookies).
 
 ## Signature key handling
 
-Each issuer path gets its own set of RSA-2048 keys, created lazily on first
-use. There is no shared global key. A request to `/tenant-a/jwks` returns
-a completely different key set from `/tenant-b/jwks` — tokens signed by one
-issuer cannot be verified against another issuer's JWKS.
+Each issuer path gets its own independent key store, created lazily on first
+use. A request to `/tenant-a/jwks` returns a completely different key set from
+`/tenant-b/jwks` — tokens signed by one issuer cannot be verified against
+another issuer's JWKS.
 
-Each issuer's key set contains four keys:
+Each issuer's key store contains six keys:
 
-| Key | Kid pattern | Published? | Purpose |
-|---|---|---|---|
-| Signing | `mock-{issuer}-{n}` | Yes (first in JWKS) | Signs all normal tokens |
-| Alt | `mock-{issuer}-alt` | No | Signs `/token/wrong-sig` tokens only |
-| Decoy 1 | `mock-{issuer}-d1` | Yes | Published but never signs; tests kid-based selection |
-| Decoy 2 | `mock-{issuer}-d2` | Yes | Same |
+| Key | Kid pattern | Alg | Published? | Purpose |
+|---|---|---|---|---|
+| RSA signing | `mock-{issuer}-{n}` | RS256 | Yes (position 0 in JWKS) | Signs RS256 tokens |
+| EC signing | `mock-{issuer}-ec-1` | ES256 | Yes (position 1 in JWKS) | Signs ES256 tokens |
+| RSA alt | `mock-{issuer}-alt` | RS256 | No | Signs `/token/wrong-sig` (RS256 identities) |
+| EC alt | `mock-{issuer}-ec-alt` | ES256 | No | Signs `/token/wrong-sig` (ES256 identities) |
+| Decoy 1 | `mock-{issuer}-d1` | RS256 | Yes | Published but never signs; tests kid-based selection |
+| Decoy 2 | `mock-{issuer}-d2` | RS256 | Yes | Same |
 
-`POST /admin/rotate-jwks?issuer=<slug>` replaces only that issuer's signing
-key (incrementing `n`). `POST /admin/rotate-jwks` (no `issuer=`) rotates all
-currently-known issuers. Alt and decoy keys are not affected by rotation.
+`POST /admin/rotate-jwks?issuer=<slug>` replaces only that issuer's **RSA
+signing** key (incrementing `n`). EC keys are not affected by rotation. Alt
+and decoy keys are never affected.
+
+`POST /admin/rotate-jwks` (no `issuer=`) rotates all currently-known issuers.
+
+### Configurable signing algorithm per identity
+
+```yaml
+service_principals:
+  service-a:
+    signing_alg: RS256   # default — omit this line for the same effect
+  service-b:
+    signing_alg: ES256   # token signed with the issuer's EC P-256 key
+```
+
+`signing_alg` may be set on any `user` or `service_principal`. Valid values:
+`RS256` (default) and `ES256`. An invalid value raises a Pydantic validation
+error at config load time.
+
+The `sign()` function detects the algorithm from the key type (`kty: RSA` →
+`RS256`, `kty: EC` → `ES256`) — no separate mapping needed in calling code.
+
+Discovery (`/.well-known/openid-configuration`) advertises:
+
+```json
+"id_token_signing_alg_values_supported": ["RS256", "ES256"]
+```
 
 **Implications:**
 
 - No persistence — pod restart regenerates all key stores.
 - Single replica per pod — multiple replicas would generate independent key
   stores. `replicas: 1` is enforced.
-- Tokens issued by a previous-generation key fail signature validation after
-  rotation (intentional — that is the test).
+- Tokens issued by a previous-generation RSA signing key fail signature
+  validation after rotation (intentional — that is the test). EC keys are not
+  rotated.
 - `/debug/config` returns `signing_kids: {"default": "mock-default-1", ...}`
-  (a dict, not a scalar) listing the current signing kid per known issuer.
+  (a dict, not a scalar) listing the current RSA signing kid per known issuer.
 
 ---
 

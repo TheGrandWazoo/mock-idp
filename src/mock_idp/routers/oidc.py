@@ -1,11 +1,10 @@
 import time
 
-from authlib.jose import jwt
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .. import config as _cfg
-from ..keys import get_alt_key, get_jwks_keys, get_signing_key, get_signing_public_key_pem
+from ..keys import get_alt_key_for_alg, get_jwks_keys, get_signing_key_for_alg, get_signing_public_key_pem
 from ..providers import get_provider
 from ..tokens import (
     apply_overrides,
@@ -44,7 +43,7 @@ async def discovery(issuer: str, request: Request):
         "introspection_endpoint": f"{base}/introspect",
         "response_types_supported": ["token", "id_token"],
         "subject_types_supported": ["public"],
-        "id_token_signing_alg_values_supported": ["RS256"],
+        "id_token_signing_alg_values_supported": ["RS256", "ES256"],
         "scopes_supported": ["openid", "profile", "email"],
         "grant_types_supported": [
             "client_credentials",
@@ -72,6 +71,8 @@ async def token(issuer: str, request: Request):
     provider = get_provider("entra_id")
     effective_mode = _cfg.ISSUER_MODES.get(issuer) or _cfg.MODE
 
+    signing_alg = "RS256"
+
     if grant_type == "password":
         user_key = form.get("username") or ""
         user = _cfg.USERS.get(user_key)
@@ -83,6 +84,7 @@ async def token(issuer: str, request: Request):
         roles = resolve_roles(user_key, user, aud)
         token_aud = resolve_user_aud(aud)  # UUID for user tokens; URI unchanged for SPs
         claims = provider.user_claims(issuer, user, token_aud, shape, expires_in, roles, form.get("client_id"))
+        signing_alg = user.signing_alg
 
     elif grant_type == "client_credentials":
         sp_key = form.get("client_id") or ""
@@ -96,6 +98,7 @@ async def token(issuer: str, request: Request):
         claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, expires_in, roles)
         if sp.override_any_claim:
             apply_overrides(claims, form, allow_iss=sp.override_iss_too)
+        signing_alg = sp.signing_alg
 
     elif grant_type == "urn:ietf:params:oauth:grant-type:token-exchange":
         # RFC 8693 — intermediary authenticates, subject identity is preserved.
@@ -143,7 +146,7 @@ async def token(issuer: str, request: Request):
 
         omit(claims, headers.get("x-omit-claims"))
         return {
-            "access_token": sign(claims, get_signing_key(issuer)),
+            "access_token": sign(claims, get_signing_key_for_alg(issuer, sp.signing_alg)),
             "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
             "token_type": "Bearer",
             "expires_in": max(0, claims["exp"] - int(time.time())),
@@ -154,7 +157,7 @@ async def token(issuer: str, request: Request):
 
     omit(claims, headers.get("x-omit-claims"))
     return {
-        "access_token": sign(claims, get_signing_key(issuer)),
+        "access_token": sign(claims, get_signing_key_for_alg(issuer, signing_alg)),
         "token_type": "Bearer",
         "expires_in": max(0, claims["exp"] - int(time.time())),
         "scope": form.get("scope", "openid profile email"),
@@ -169,6 +172,7 @@ async def token_wrong_sig(issuer: str, request: Request):
     aud = resolve_aud(form)
     provider = get_provider("entra_id")
     effective_mode = _cfg.ISSUER_MODES.get(issuer) or _cfg.MODE
+    signing_alg = "RS256"
 
     if form.get("grant_type") == "password":
         user_key = form.get("username") or ""
@@ -179,6 +183,7 @@ async def token_wrong_sig(issuer: str, request: Request):
         shape = resolve_shape(user.token_version, form, headers.get("x-token-shape"))
         roles = resolve_roles(user_key, user, aud)
         claims = provider.user_claims(issuer, user, aud, shape, 3600, roles, form.get("client_id"))
+        signing_alg = user.signing_alg
     else:
         sp_key = form.get("client_id") or ""
         sp = _cfg.SERVICE_PRINCIPALS.get(sp_key)
@@ -188,9 +193,10 @@ async def token_wrong_sig(issuer: str, request: Request):
         shape = resolve_shape(sp.token_version, form, headers.get("x-token-shape"))
         roles = resolve_roles(sp_key, sp, aud)
         claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, 3600, roles)
+        signing_alg = sp.signing_alg
 
     return {
-        "access_token": sign(claims, get_alt_key(issuer)),
+        "access_token": sign(claims, get_alt_key_for_alg(issuer, signing_alg)),
         "token_type": "Bearer",
         "expires_in": 3600,
     }
@@ -333,8 +339,7 @@ async def introspect(issuer: str, request: Request):
 async def userinfo(issuer: str, authorization: str = Header(...)):
     if not authorization.startswith("Bearer "):
         raise HTTPException(401, "missing bearer token")
-    try:
-        claims = jwt.decode(authorization[7:], get_signing_key(issuer))
-    except Exception:
+    claims = verify_token(authorization[7:], get_jwks_keys(issuer))
+    if claims is None:
         raise HTTPException(401, "invalid token")
-    return JSONResponse(dict(claims))
+    return JSONResponse(claims)

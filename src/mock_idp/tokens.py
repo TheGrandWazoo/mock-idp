@@ -206,7 +206,9 @@ def redact(d: object) -> object:
 
 
 def sign(claims: dict, key: JsonWebKey) -> str:
-    header = {"alg": "RS256", "typ": "JWT", "kid": key_kid(key)}
+    kty = key.as_dict(is_private=False)["kty"]
+    alg = "ES256" if kty == "EC" else "RS256"
+    header = {"alg": alg, "typ": "JWT", "kid": key_kid(key)}
     return jwt.encode(header, claims, key).decode("utf-8")
 
 

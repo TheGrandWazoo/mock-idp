@@ -55,6 +55,7 @@ tenants:
         secret: serviceB-secret
         label: ServiceB
         token_version: v1
+        signing_alg: ES256
         groups: [service-accounts]
         allowed_audiences: [api://serviceC]
 

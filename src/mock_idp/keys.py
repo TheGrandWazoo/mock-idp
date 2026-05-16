@@ -4,8 +4,12 @@ from cryptography.hazmat.primitives import serialization
 from authlib.jose import JsonWebKey
 
 
-def _new_key(kid: str) -> JsonWebKey:
+def _new_rsa_key(kid: str) -> JsonWebKey:
     return JsonWebKey.generate_key("RSA", 2048, is_private=True, options={"kid": kid})
+
+
+def _new_ec_key(kid: str) -> JsonWebKey:
+    return JsonWebKey.generate_key("EC", "P-256", is_private=True, options={"kid": kid})
 
 
 def key_kid(key: JsonWebKey) -> str:
@@ -13,24 +17,32 @@ def key_kid(key: JsonWebKey) -> str:
 
 
 class _IssuerKeys:
-    __slots__ = ("_issuer", "_seq", "signing", "alt", "decoys")
+    __slots__ = ("_issuer", "_seq", "signing", "alt", "decoys", "ec_signing", "ec_alt")
 
     def __init__(self, issuer: str) -> None:
         self._issuer = issuer
         self._seq = 1
         prefix = f"mock-{issuer}"
-        self.signing = _new_key(f"{prefix}-1")
-        self.alt = _new_key(f"{prefix}-alt")
-        self.decoys = [_new_key(f"{prefix}-d1"), _new_key(f"{prefix}-d2")]
+        self.signing = _new_rsa_key(f"{prefix}-1")
+        self.alt = _new_rsa_key(f"{prefix}-alt")
+        self.decoys = [_new_rsa_key(f"{prefix}-d1"), _new_rsa_key(f"{prefix}-d2")]
+        self.ec_signing = _new_ec_key(f"{prefix}-ec-1")
+        self.ec_alt = _new_ec_key(f"{prefix}-ec-alt")
 
     def jwks_keys(self) -> list[JsonWebKey]:
-        """Active signing key first, then decoys — tests the gateway's kid-based selection."""
-        return [self.signing] + self.decoys
+        """RSA signing key, EC signing key, then RSA decoys — tests kid-based selection."""
+        return [self.signing, self.ec_signing] + self.decoys
 
     def rotate(self) -> JsonWebKey:
         self._seq += 1
-        self.signing = _new_key(f"mock-{self._issuer}-{self._seq}")
+        self.signing = _new_rsa_key(f"mock-{self._issuer}-{self._seq}")
         return self.signing
+
+    def signing_key_for_alg(self, alg: str) -> JsonWebKey:
+        return self.ec_signing if alg == "ES256" else self.signing
+
+    def alt_key_for_alg(self, alg: str) -> JsonWebKey:
+        return self.ec_alt if alg == "ES256" else self.alt
 
     def signing_public_key_pem(self) -> bytes:
         return self.signing.as_key().public_bytes(
@@ -59,6 +71,14 @@ def get_signing_key(issuer: str) -> JsonWebKey:
 
 def get_alt_key(issuer: str) -> JsonWebKey:
     return _get(issuer).alt
+
+
+def get_signing_key_for_alg(issuer: str, alg: str) -> JsonWebKey:
+    return _get(issuer).signing_key_for_alg(alg)
+
+
+def get_alt_key_for_alg(issuer: str, alg: str) -> JsonWebKey:
+    return _get(issuer).alt_key_for_alg(alg)
 
 
 def get_jwks_keys(issuer: str) -> list[JsonWebKey]:
