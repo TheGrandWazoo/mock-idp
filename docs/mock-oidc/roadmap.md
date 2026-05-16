@@ -3,7 +3,7 @@
 What's not yet shipped, what's worth doing next, and what's parked unless a
 specific need surfaces.
 
-Current release is **v0.5.5**. The v0.3 surface is documented in ADR-002 and
+Current release is **v0.5.6**. The v0.3 surface is documented in ADR-002 and
 ADR-003. The v0.4 surface is documented in ADR-003 (Postgres backend) and the
 commit history. The v0.5 surface is documented in ADR-004 (per-issuer signing
 keys) and the commit history.
@@ -215,6 +215,20 @@ makes this possible if the need ever becomes concrete.
 ---
 
 ## Resolved
+
+### v0.5.6
+
+- ✓ **joserfc migration (issue #31)** — replaced `authlib.jose` with `joserfc`
+  (the library authlib itself recommends). Eliminates `AuthlibDeprecationWarning`
+  on startup. `verify_token` simplified from manual kid-loop to `KeySet` decode.
+  `authlib` removed from the dependency tree entirely.
+- ✓ **Playground role selector fix (issue #29)** — all roles defined on a
+  client app now appear as checkboxes; granted roles are pre-checked, non-granted
+  roles unchecked (dimmed, available for negative testing). Previously only the
+  identity's own grants appeared.
+- ✓ **k8s manifest updated to current schema** — ConfigMap migrated from
+  flat pre-v0.3 layout to current `tenants:` schema with `service_principals:`,
+  `clients:`, and `admin_token: {from_env: ...}`.
 
 ### CI / infrastructure
 
