@@ -120,6 +120,23 @@ value is limited.
 **When to revisit:** if you start using cert-based client auth in
 production.
 
+### 🟡 Smoke test failure opens a GitHub issue automatically
+
+When the CI smoke test fails, automatically open a GitHub issue with:
+- Which step failed (healthz / password grant / client_credentials grant)
+- Container logs (`docker logs mock-idp-smoke`)
+- Commit SHA, branch, run URL
+- Label `bug` + `smoke-test-failure` for triage
+
+Implementation: add an `if: failure()` step after the smoke test using
+`gh issue create` with the `GITHUB_TOKEN`. Close the issue automatically
+if a subsequent run on the same branch passes (query open issues by label
+and SHA prefix, close with a comment).
+
+**When to revisit:** once the smoke test has proven stable and the team
+starts reacting to failures from the issue tracker rather than watching
+CI directly.
+
 ### 🟡 Self-hosted CI runner on Proxmox k3s
 
 Deploy a self-hosted GitHub Actions runner onto a k3s cluster running on
