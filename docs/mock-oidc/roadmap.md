@@ -3,7 +3,7 @@
 What's not yet shipped, what's worth doing next, and what's parked unless a
 specific need surfaces.
 
-Current release is **v0.3.7**. The v0.3 surface is documented in ADR-002 and
+Current release is **v0.3.9**. The v0.3 surface is documented in ADR-002 and
 the commit history. This file exists so design conversations stay grounded —
 if someone says "we should add X", you can check whether X is already on the
 list and what the thinking was at the time.
@@ -139,22 +139,6 @@ clients:
 **Why:** confirm the gateway handles multi-alg JWKS gracefully.
 
 **Effort:** ~15 LOC; add `signing_alg` field; expand the key dict.
-
-### 🟢 Config hot-reload
-
-Watch the config file for changes (via `watchfiles`) and reload the
-identity store without a pod restart. Signing keys stay; only the
-identity tables refresh.
-
-**Why:** speeds up the test-iteration loop. Edit `config.yaml`, see
-new behavior in ~1s.
-
-**Effort:** ~40 LOC; add `watchfiles` dependency; careful with
-concurrent read-while-replacing.
-
-**Gating:** opt-in via `enable_hot_reload: true` in config. Off by
-default so the operational behavior in production-ish environments stays
-predictable.
 
 ### 🟢 Realm roles (Keycloak-influenced, optional)
 
@@ -324,6 +308,17 @@ fixture, fresh-start-per-restart is ideal.
 - ✓ **Per-issuer `auth_mode` (v0.3.6)** — `issuer_modes: {slug: lax|strict}` in config
   overrides global `auth_mode` per issuer path. One mock can serve both lax and strict
   test scenarios.
+- ✓ **Config pre-lint and better validation errors (v0.3.8)** — structural lint pass before
+  Pydantic catches common YAML mistakes (numeric passwords, SP nested under `users:`, key
+  typos). `ValidationError` formatted with location path and `Fix:` hints including
+  difflib "did you mean?" suggestions. `extra='forbid'` on `AppConfig` and `TenantRecord`
+  so unknown keys are hard errors.
+- ✓ **Pluggable identity store + config hot-reload (v0.3.9)** — `IdentityStore` protocol
+  in `store/` package; `YamlIdentityStore` is the default backend. `create_store()` factory
+  for future backends (Postgres, SQLite, etc.). `watchfiles` background task in `main.py`
+  reloads the config file on change — Kubernetes ConfigMap remounts are picked up within
+  the kubelet sync window with no pod restart. Reload failures preserve current state.
+  See ADR-003.
 - ✓ **Algorithm-failure negative endpoints (v0.3.7)** — two new POST endpoints:
   `/{issuer}/token/unsigned` (alg:none, empty signature) and `/{issuer}/token/wrong-alg`
   (HS256-signed with the RSA public key as HMAC secret). Auth and audience checks still
