@@ -3,7 +3,7 @@
 What's not yet shipped, what's worth doing next, and what's parked unless a
 specific need surfaces.
 
-Current release is **v0.5.1**. The v0.3 surface is documented in ADR-002 and
+Current release is **v0.5.2**. The v0.3 surface is documented in ADR-002 and
 ADR-003. The v0.4 surface is documented in ADR-003 (Postgres backend) and the
 commit history. The v0.5 surface is documented in ADR-004 (per-issuer signing
 keys) and the commit history.
@@ -82,21 +82,6 @@ demand yet. Shape and merge logic are documented in ADR-002 §Decision.
 ---
 
 ### Observability / testing
-
-#### 🟢 Webhook on token issuance
-
-Configurable URL the mock POSTs to on every successful token issuance,
-with the request parameters and token claims. Lets integration tests
-assert "what was issued" without scraping logs.
-
-```yaml
-webhooks:
-  - url: http://test-recorder.example.com/events
-    events: [token_issued]
-```
-
-**Effort:** ~30 LOC + tests; `httpx` async client (already a dev
-dependency via `starlette`'s test client).
 
 ---
 
@@ -230,6 +215,13 @@ makes this possible if the need ever becomes concrete.
 
 ### v0.5
 
+- ✓ **Webhook on token issuance (v0.5.2)** — top-level `webhooks:` list in config;
+  each entry has `url`, `events: [token_issued]`, and `timeout_seconds: 5`.
+  The mock POSTs `{event, timestamp, issuer, grant_type, claims}` to each matching URL
+  after every successful `/token` call. Delivery is fire-and-forget — failures are
+  logged at WARNING and never block token issuance. 5 new tests (happy path for
+  password + client_credentials, no-op when unconfigured, failure isolation,
+  event filter). See S72–S75 in test-scenarios.md.
 - ✓ **Configurable signing algorithm per identity (v0.5.1)** — `signing_alg: RS256`
   (default) or `signing_alg: ES256` on any user or service principal. Each issuer
   now also holds an EC P-256 keypair alongside the RSA-2048 pair; JWKS publishes

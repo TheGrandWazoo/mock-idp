@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from ..models import AppConfig, ClientAppRecord, ServicePrincipalRecord, TenantRecord, UserRecord
+from ..models import AppConfig, ClientAppRecord, ServicePrincipalRecord, TenantRecord, UserRecord, WebhookConfig
 
 _log = logging.getLogger(__name__)
 
@@ -117,6 +117,7 @@ class YamlIdentityStore:
         self._mode: str = "lax"
         self._admin_token: str = "change-me"
         self._cors_origins: list[str] = ["*"]
+        self._webhooks: list[WebhookConfig] = []
         # Dicts — updated in-place so external references stay valid.
         self._issuer_modes: dict[str, str] = {}
         self._users: dict[str, UserRecord] = {}
@@ -149,6 +150,10 @@ class YamlIdentityStore:
     @property
     def cors_origins(self) -> list[str]:
         return self._cors_origins
+
+    @property
+    def webhooks(self) -> list[WebhookConfig]:
+        return self._webhooks
 
     @property
     def users(self) -> dict[str, UserRecord]:
@@ -216,6 +221,7 @@ class YamlIdentityStore:
         self._mode = cfg.auth_mode
         self._admin_token = cfg.admin_token
         self._cors_origins = list(cfg.cors_allow_origins)
+        self._webhooks = list(cfg.webhooks)
 
         self._issuer_modes.clear()
         self._issuer_modes.update(cfg.issuer_modes)

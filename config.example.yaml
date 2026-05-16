@@ -8,6 +8,14 @@ admin_token: change-me-in-real-deployments
 #   strict-issuer: strict
 #   permissive-issuer: lax
 
+# Webhook on token issuance. The mock POSTs a JSON payload to each URL
+# whenever a token is issued at the /token endpoint. Use in integration tests
+# to assert what was issued without scraping logs.
+# webhooks:
+#   - url: http://localhost:9090/events
+#     events: [token_issued]
+#     timeout_seconds: 5
+
 tenants:
   22222222-2222-2222-2222-222222222222:
     provider: entra_id

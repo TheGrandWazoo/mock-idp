@@ -1036,6 +1036,124 @@ def test_admin_rotate_single_issuer_does_not_affect_others(client):
             assert kids_after[issuer] == kid
 
 
+# ── Webhook on token issuance ──────────────────────────────────────────────
+
+
+def test_webhook_fires_on_password_grant(client):
+    """A configured webhook receives a payload when a password-grant token is issued."""
+    from unittest.mock import patch
+
+    import mock_idp.config as m
+    from mock_idp.models import WebhookConfig
+
+    captured = []
+
+    async def fake_deliver(url, body, timeout):
+        captured.append(body)
+
+    m.WEBHOOKS.append(WebhookConfig(url="http://wh.test/events"))
+    try:
+        with patch("mock_idp.webhooks._deliver", side_effect=fake_deliver):
+            r = client.post(
+                "/default/token",
+                data={"grant_type": "password", "username": "alice",
+                      "password": "alice-pw", "resource": "api://serviceB"},
+            )
+        assert r.status_code == 200
+        assert len(captured) == 1
+        body = captured[0]
+        assert body["event"] == "token_issued"
+        assert body["grant_type"] == "password"
+        assert body["issuer"] == "default"
+        assert "claims" in body
+        assert body["claims"]["sub"] == USERS["alice"].oid
+    finally:
+        m.WEBHOOKS[:] = [h for h in m.WEBHOOKS if h.url != "http://wh.test/events"]
+
+
+def test_webhook_fires_on_client_credentials(client):
+    """Webhook fires for client_credentials grant with correct claims."""
+    from unittest.mock import patch
+
+    import mock_idp.config as m
+    from mock_idp.models import WebhookConfig
+
+    captured = []
+
+    async def fake_deliver(url, body, timeout):
+        captured.append(body)
+
+    m.WEBHOOKS.append(WebhookConfig(url="http://wh.test/events"))
+    try:
+        with patch("mock_idp.webhooks._deliver", side_effect=fake_deliver):
+            r = client.post(
+                "/default/token",
+                data={"grant_type": "client_credentials", "client_id": "service-a",
+                      "client_secret": "serviceA-secret", "resource": "api://serviceB"},
+            )
+        assert r.status_code == 200
+        assert len(captured) == 1
+        assert captured[0]["grant_type"] == "client_credentials"
+        assert captured[0]["claims"]["aud"] == "api://serviceB"
+    finally:
+        m.WEBHOOKS[:] = [h for h in m.WEBHOOKS if h.url != "http://wh.test/events"]
+
+
+def test_webhook_not_fired_when_unconfigured(client):
+    """No webhook calls when WEBHOOKS list is empty."""
+    from unittest.mock import patch
+
+    import mock_idp.config as m
+
+    assert m.WEBHOOKS == []  # baseline from config.example.yaml
+
+    with patch("mock_idp.webhooks._deliver") as mock_deliver:
+        client.post(
+            "/default/token",
+            data={"grant_type": "password", "username": "alice",
+                  "password": "alice-pw", "resource": "api://serviceB"},
+        )
+    mock_deliver.assert_not_called()
+
+
+def test_webhook_failure_does_not_break_token_issuance(client):
+    """Token is issued normally even when the webhook endpoint is unreachable."""
+    import mock_idp.config as m
+    from mock_idp.models import WebhookConfig
+
+    m.WEBHOOKS.append(WebhookConfig(url="http://does-not-exist.invalid/events"))
+    try:
+        r = client.post(
+            "/default/token",
+            data={"grant_type": "password", "username": "alice",
+                  "password": "alice-pw", "resource": "api://serviceB"},
+        )
+        assert r.status_code == 200
+        assert "access_token" in r.json()
+    finally:
+        m.WEBHOOKS[:] = [h for h in m.WEBHOOKS if "does-not-exist" not in h.url]
+
+
+def test_webhook_event_filter_respected(client):
+    """A webhook configured for an unknown event name never fires on token_issued."""
+    from unittest.mock import patch
+
+    import mock_idp.config as m
+    from mock_idp.models import WebhookConfig
+
+    m.WEBHOOKS.append(WebhookConfig(url="http://wh.test/events", events=["other_event"]))
+    try:
+        with patch("mock_idp.webhooks._deliver") as mock_deliver:
+            client.post(
+                "/default/token",
+                data={"grant_type": "password", "username": "alice",
+                      "password": "alice-pw", "resource": "api://serviceB"},
+            )
+        mock_deliver.assert_not_called()
+    finally:
+        m.WEBHOOKS[:] = [h for h in m.WEBHOOKS if h.url != "http://wh.test/events"]
+
+
 # ── Configurable signing algorithm (RS256 / ES256) ────────────────────────
 
 

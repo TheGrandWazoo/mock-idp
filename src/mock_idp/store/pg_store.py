@@ -93,6 +93,11 @@ class PostgresIdentityStore:
     def client_apps(self) -> dict[str, ClientAppRecord]:
         return self._client_apps
 
+    @property
+    def webhooks(self) -> list:
+        # Webhooks are static YAML config; not stored in Postgres.
+        return []
+
     # ── Lifecycle ──────────────────────────────────────────────────────────
 
     async def startup(self) -> None:

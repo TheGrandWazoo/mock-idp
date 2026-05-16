@@ -123,6 +123,8 @@ clients:
 | `auth_mode` | `lax` or `strict`. Default `lax`. |
 | `cors_allow_origins` | List of origins allowed by CORS. Default `["*"]`. |
 | `admin_token` | Required value of `X-Admin-Token` for admin endpoints. |
+| `webhooks` | List of webhook destinations. Each has `url`, `events` (default `["token_issued"]`), and `timeout_seconds` (default `5`). |
+| `issuer_modes` | Per-issuer `auth_mode` overrides: `{slug: lax\|strict}`. |
 
 **Users**
 

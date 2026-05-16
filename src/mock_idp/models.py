@@ -96,6 +96,14 @@ class TenantRecord(BaseModel):
     clients: dict[str, ClientAppRecord] = {}  # resource apps keyed by audience URI
 
 
+class WebhookConfig(BaseModel):
+    """One webhook destination."""
+
+    url: str
+    events: list[str] = ["token_issued"]
+    timeout_seconds: float = 5.0
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -103,6 +111,7 @@ class AppConfig(BaseModel):
     cors_allow_origins: list[str] = ["*"]
     admin_token: str = "change-me"
     issuer_modes: dict[str, str] = {}  # per-issuer-slug auth_mode overrides
+    webhooks: list[WebhookConfig] = []
     tenants: dict[str, TenantRecord] = {}
 
     @field_validator("auth_mode")

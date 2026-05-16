@@ -1,6 +1,6 @@
 # Test Scenarios — Python Mock OIDC
 
-Concrete request/response patterns for the v0.5.1 surface area. Use these
+Concrete request/response patterns for the v0.5.2 surface area. Use these
 as the basis for a regression suite, ad-hoc curl tests, or gateway
 integration tests.
 
@@ -1045,6 +1045,99 @@ Useful for confirming rotation state across a multi-issuer test run.
 
 ---
 
+## Webhook on token issuance (v0.5.2)
+
+**What this is:** After every successful token issuance at `/{issuer}/token`,
+the mock POSTs a JSON payload to each configured webhook URL. Negative endpoints
+(`/token/wrong-sig`, `/token/unsigned`, `/token/wrong-alg`) do not trigger
+webhooks — they are test fixtures, not real issuances.
+
+**Why you'd use it:** Integration tests can assert "a token was issued for this
+identity with these claims" without scraping server logs or decoding JWTs. Point
+the webhook at a lightweight HTTP recorder in your test harness, then inspect
+the captured payloads after the request completes.
+
+### S72 — Configure a webhook receiver
+
+```yaml
+# config.yaml
+webhooks:
+  - url: http://localhost:9090/events
+    events: [token_issued]
+    timeout_seconds: 5
+```
+
+Any POST to `/{issuer}/token` (password, client_credentials, or token-exchange)
+now delivers a payload to `http://localhost:9090/events`.
+
+### S73 — Webhook payload
+
+The body POSTed to your receiver:
+
+```json
+{
+  "event": "token_issued",
+  "timestamp": "2026-05-16T12:00:00.000000+00:00",
+  "issuer": "default",
+  "grant_type": "client_credentials",
+  "claims": {
+    "sub": "01010101-1010-1010-1010-aaaaaaaaaaaa",
+    "aud": "api://serviceB",
+    "appid": "01010101-1010-1010-1010-aaaaaaaaaaaa",
+    "roles": ["m2m"],
+    "iss": "http://mock-idp.example.com/default",
+    "exp": 1234567890,
+    "iat": 1234564290
+  }
+}
+```
+
+`claims` is the full decoded payload — no JWT parsing needed. Use it to assert
+specific claim values directly in your test assertions.
+
+### S74 — Webhook failure does not block token issuance
+
+If the webhook endpoint is down, times out, or returns a non-2xx response, the
+token is still issued and the `/token` response returns normally. The failure is
+logged at WARNING level on the mock server:
+
+```
+WARNING mock_idp.webhooks: Webhook delivery failed (http://localhost:9090/events): ...
+```
+
+Your test must not depend on webhook delivery being synchronous with the
+`/token` response — treat it as eventually delivered with a short timeout.
+
+### S75 — Event filter
+
+```yaml
+webhooks:
+  - url: http://localhost:9090/events
+    events: [token_issued]   # only this event; future events won't fire here
+```
+
+If `events` does not include `token_issued`, the webhook never fires for token
+issuances. This allows a single receiver URL to be selectively subscribed to
+future event types without receiving everything.
+
+**Troubleshooting:**
+
+- Webhook never arrives → confirm `events` includes `token_issued` (exact
+  string, case-sensitive). Check the mock server log for `Webhook delivery
+  failed` warnings.
+- Webhook payload missing expected claims → the `claims` dict is built before
+  `X-Omit-Claims` is applied. If you omit claims via that header, the webhook
+  still sees them. This is intentional — the webhook is for test assertion, not
+  the consumer's view.
+- Token issuance is slow → check `timeout_seconds`. Default is 5 s; if the
+  receiver is unreachable and not actively refusing connections, delivery will
+  block for up to `timeout_seconds` before logging a warning. Reduce to 1 s for
+  faster test teardown.
+- Multiple webhooks configured → all matching entries fire concurrently via
+  `asyncio.gather`. Order of delivery is not guaranteed.
+
+---
+
 ## Configurable signing algorithm per identity (v0.5.1)
 
 **What this is:** Each identity (user or service principal) can specify
@@ -1193,7 +1286,8 @@ token was issued before the server was last restarted (new keys on each start).
 | Token introspection (RFC 7662) | S55–S58 |
 | Token Exchange (RFC 8693) | S59–S62 |
 | Per-issuer signing key isolation | S63–S66 |
+| Webhook on token issuance | S72–S75 |
 | Configurable signing algorithm | S67–S71 |
 
-That is the full v0.5.1 surface area. Anything not covered here is either
+That is the full v0.5.2 surface area. Anything not covered here is either
 a v0.4 roadmap item (token introspection, token exchange, config hot-reload, etc.) or out of scope.

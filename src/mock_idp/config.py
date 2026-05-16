@@ -24,7 +24,7 @@ See store/__init__.py for the full interface.
 import os
 from pathlib import Path
 
-from .models import ClientAppRecord, ServicePrincipalRecord, UserRecord
+from .models import ClientAppRecord, ServicePrincipalRecord, UserRecord, WebhookConfig
 from .store import IdentityStore, create_store
 
 CONFIG_PATH = Path(os.getenv("CONFIG_PATH", "/etc/mock-idp/config.yaml"))
@@ -54,6 +54,7 @@ MODE: str = store.mode
 # Env var takes precedence so the token can live in a Kubernetes Secret.
 ADMIN_TOKEN: str = os.getenv("MOCK_IDP_ADMIN_TOKEN") or store.admin_token
 CORS_ORIGINS: list[str] = store.cors_origins
+WEBHOOKS: list[WebhookConfig] = list(store.webhooks)
 
 
 async def reload_config() -> None:
@@ -67,8 +68,9 @@ async def reload_config() -> None:
     are not re-applied until the next pod restart. All other values take effect
     immediately after this call returns.
     """
-    global MODE, ADMIN_TOKEN, CORS_ORIGINS
+    global MODE, ADMIN_TOKEN, CORS_ORIGINS, WEBHOOKS
     await store.reload()
     MODE = store.mode
     ADMIN_TOKEN = os.getenv("MOCK_IDP_ADMIN_TOKEN") or store.admin_token
     CORS_ORIGINS = store.cors_origins
+    WEBHOOKS = list(store.webhooks)

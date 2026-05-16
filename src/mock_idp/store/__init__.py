@@ -19,7 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from ..models import ClientAppRecord, ServicePrincipalRecord, UserRecord
+from ..models import ClientAppRecord, ServicePrincipalRecord, UserRecord, WebhookConfig
 from .yaml_store import YamlIdentityStore
 
 
@@ -61,6 +61,9 @@ class IdentityStore(Protocol):
 
     @property
     def client_apps(self) -> dict[str, ClientAppRecord]: ...
+
+    @property
+    def webhooks(self) -> list[WebhookConfig]: ...
 
     async def startup(self) -> None:
         """One-time initialisation (e.g. create connection pool, load initial data).

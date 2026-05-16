@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from .. import config as _cfg
 from ..keys import get_alt_key_for_alg, get_jwks_keys, get_signing_key_for_alg, get_signing_public_key_pem
+from ..webhooks import fire_webhooks
 from ..providers import get_provider
 from ..tokens import (
     apply_overrides,
@@ -145,8 +146,14 @@ async def token(issuer: str, request: Request):
         claims["act"] = {"sub": sp._canonical_id}
 
         omit(claims, headers.get("x-omit-claims"))
+        access_token = sign(claims, get_signing_key_for_alg(issuer, sp.signing_alg))
+        await fire_webhooks("token_issued", {
+            "issuer": issuer,
+            "grant_type": grant_type,
+            "claims": claims,
+        })
         return {
-            "access_token": sign(claims, get_signing_key_for_alg(issuer, sp.signing_alg)),
+            "access_token": access_token,
             "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
             "token_type": "Bearer",
             "expires_in": max(0, claims["exp"] - int(time.time())),
@@ -156,8 +163,14 @@ async def token(issuer: str, request: Request):
         raise HTTPException(400, "unsupported_grant_type")
 
     omit(claims, headers.get("x-omit-claims"))
+    access_token = sign(claims, get_signing_key_for_alg(issuer, signing_alg))
+    await fire_webhooks("token_issued", {
+        "issuer": issuer,
+        "grant_type": grant_type,
+        "claims": claims,
+    })
     return {
-        "access_token": sign(claims, get_signing_key_for_alg(issuer, signing_alg)),
+        "access_token": access_token,
         "token_type": "Bearer",
         "expires_in": max(0, claims["exp"] - int(time.time())),
         "scope": form.get("scope", "openid profile email"),
