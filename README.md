@@ -7,13 +7,13 @@
 [![License: ELv2](https://img.shields.io/badge/license-ELv2-orange)](LICENSE)
 
 FastAPI mock identity provider that emits configurable OIDC-compliant JWTs for
-testing API gateway authentication. Supports `password` and `client_credentials`
-grants, per-identity token shape (v1/v2), lax/strict audience gating, admin
+testing API gateway authentication. Supports `password`, `client_credentials`, and
+`token-exchange` (RFC 8693) grants, token introspection (RFC 7662), per-identity
+token shape (v1/v2), per-issuer signing keys, lax/strict audience gating, admin
 overrides, key rotation, CORS, and a browser token playground.
 
-Full architecture, design decisions, and test scenario coverage live in
-[`docs/mock-oidc/`](docs/mock-oidc/). Running into a problem? See
-[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md).
+Full architecture, design decisions, test scenarios, and troubleshooting live in
+[`docs/mock-oidc/`](docs/mock-oidc/).
 
 ---
 
@@ -53,8 +53,10 @@ On every push to `main`:
 
 1. **Lint** — `ruff check src tests`
 2. **Test** — `pytest tests`
-3. **Build & push** — image pushed to `ghcr.io/your-org/mock-idp`
-4. **Scan** — Trivy scans for CRITICAL/HIGH CVEs (blocks on findings)
+3. **Build & push** — image pushed to `ghcr.io/thegrandwazoo/mock-idp`
+4. **Scan** — Trivy scans for CRITICAL/HIGH CVEs; results uploaded to GitHub Security tab
+
+`git tag v*` also builds a versioned image + `latest`.
 
 PRs run lint + test only (no push).
 
@@ -78,31 +80,37 @@ as a managed service for third parties requires a commercial license.
 
 ```
 src/mock_idp/
-  main.py           FastAPI app entrypoint
+  main.py           FastAPI app entrypoint; lifespan wires store startup/shutdown
   config.py         Config loader; exports USERS, SERVICE_PRINCIPALS, CLIENT_APPS
-  models.py         Pydantic models (UserRecord, ServicePrincipalRecord, ClientAppRecord, …)
-  tokens.py         Provider-agnostic helpers: resolve_roles, check_audience, sign, …
-  keys.py           RSA key generation and rotation
+  models.py         Pydantic models (UserRecord, ServicePrincipalRecord, …)
+  tokens.py         Claim helpers: resolve_roles, check_audience, sign, verify_token, …
+  keys.py           Per-issuer RSA key stores; lazy creation; rotate()
   providers/
     __init__.py     Provider registry: get_provider(name) → module
     entra_id.py     Entra ID claim building: user_claims(), sp_claims()
+  store/
+    __init__.py     IdentityStore protocol + create_store() factory
+    yaml_store.py   YAML file backend (default)
+    pg_store.py     Postgres backend (MOCK_IDP_BACKEND=postgres)
   routers/
-    oidc.py         Discovery, JWKS, /token, /userinfo endpoints
-    admin.py        POST /admin/rotate-jwks
+    oidc.py         Discovery, JWKS, /token (password/cc/exchange), /introspect, /userinfo
+    admin.py        POST /admin/rotate-jwks[?issuer=], POST /admin/reload-config
     debug.py        /debug/identities, /debug/config, /debug/decode
     playground.py   Serves playground.html at GET /
 src/playground.html Browser token playground
 tests/
-  test_app.py       pytest suite
+  test_app.py       pytest suite (66 tests)
+alembic/            Postgres schema migrations
 chart/              Helm chart
 manifests/
   mock-idp.yaml     Raw K8s manifests (reference only)
-.github/workflows/
-  ci.yml            Lint → test → build/push → Trivy scan
-.pre-commit-config.yaml  Pre-commit hooks
-config.example.yaml Sample identity store for local dev (v0.3 schema)
+.github/
+  workflows/ci.yml  Lint → test → build/push → Trivy scan + SARIF upload
+  dependabot.yml    Weekly pip + Actions updates
+.pre-commit-config.yaml  Pre-commit hooks (ruff, yaml, helm)
+config.example.yaml Sample identity store for local dev
 Dockerfile
 pyproject.toml      Project metadata and dependencies
 uv.lock             Locked dependency versions
-docs/mock-oidc/     Architecture, ADRs, roadmap, test scenarios, hosting PoC
+docs/mock-oidc/     ADRs, roadmap, architecture, test scenarios, troubleshooting
 ```
