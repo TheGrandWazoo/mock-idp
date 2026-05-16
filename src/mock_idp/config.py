@@ -8,10 +8,17 @@ are updated in-place on reload — callers holding a reference always see live d
 Scalar variables (MODE, ADMIN_TOKEN, CORS_ORIGINS) are re-bound by
 reload_config() after each store reload.
 
+Backend selection
+-----------------
+Set MOCK_IDP_BACKEND to choose the backing store:
+  - ``yaml`` (default) — reads from a YAML ConfigMap at CONFIG_PATH
+  - ``file``           — alias for yaml
+  - ``postgres``       — reads from Postgres; requires MOCK_IDP_PG_DSN
+
 Swapping the backing store
 --------------------------
-Change the ``create_store`` call below to a different backend and the rest of
-the application is unaffected. See store/__init__.py for the full interface.
+Change the environment variables and the rest of the application is unaffected.
+See store/__init__.py for the full interface.
 """
 
 import os
@@ -23,8 +30,15 @@ from .store import IdentityStore, create_store
 CONFIG_PATH = Path(os.getenv("CONFIG_PATH", "/etc/mock-idp/config.yaml"))
 ISS_BASE = os.getenv("ISS_BASE", "http://localhost:8080")
 
-# Active backend — swap this line to change the backing store.
-store: IdentityStore = create_store("yaml", path=CONFIG_PATH)
+# ── Backend selection ──────────────────────────────────────────────────────
+_backend = os.getenv("MOCK_IDP_BACKEND", "yaml").lower()
+
+if _backend == "postgres":
+    _dsn = os.getenv("MOCK_IDP_PG_DSN", "")
+    store: IdentityStore = create_store("postgres", dsn=_dsn)
+else:
+    # "yaml" or "file" — YAML ConfigMap backend (default)
+    store = create_store("yaml", path=CONFIG_PATH)
 
 # ── Dict references (updated in-place by store.reload()) ──────────────────
 USERS: dict[str, UserRecord] = store.users
@@ -42,19 +56,19 @@ ADMIN_TOKEN: str = os.getenv("MOCK_IDP_ADMIN_TOKEN") or store.admin_token
 CORS_ORIGINS: list[str] = store.cors_origins
 
 
-def reload_config() -> None:
+async def reload_config() -> None:
     """Reload identity data from the backing store.
 
-    Called by the file-watcher background task in main.py when the config file
-    changes. Dict references stay valid (updated in-place by the store).
-    Scalars are re-read and re-bound here.
+    Called by the file-watcher background task in main.py (YAML backend) or
+    POST /admin/reload-config (all backends). Dict references stay valid
+    (updated in-place by the store). Scalars are re-read and re-bound here.
 
     Note: CORS origins are captured at startup by FastAPI's CORSMiddleware and
     are not re-applied until the next pod restart. All other values take effect
     immediately after this call returns.
     """
     global MODE, ADMIN_TOKEN, CORS_ORIGINS
-    store.reload()
+    await store.reload()
     MODE = store.mode
     ADMIN_TOKEN = os.getenv("MOCK_IDP_ADMIN_TOKEN") or store.admin_token
     CORS_ORIGINS = store.cors_origins

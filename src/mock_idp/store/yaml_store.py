@@ -166,7 +166,13 @@ class YamlIdentityStore:
     def client_apps(self) -> dict[str, ClientAppRecord]:
         return self._client_apps
 
-    def reload(self) -> None:
+    async def startup(self) -> None:
+        pass  # YAML store initialises synchronously in __init__
+
+    async def shutdown(self) -> None:
+        pass  # Nothing to release for a file-backed store
+
+    async def reload(self) -> None:
         """Re-read the config file and update all identity tables in-place.
 
         If the new config fails validation the error is logged and the current

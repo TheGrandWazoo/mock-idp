@@ -1,7 +1,7 @@
 # ADR-003: Pluggable Identity Store and Config Hot-Reload
 
 **Date:** 2026-05-15
-**Status:** Accepted
+**Status:** Accepted — updated 2026-05-15 (v0.4.0 shipped Postgres backend)
 **Deciders:** Platform team
 
 ---
@@ -124,10 +124,14 @@ src/mock_idp/
   store/
     __init__.py      IdentityStore protocol + create_store() factory
     yaml_store.py    YamlIdentityStore (YAML file backend)
-    # future:
-    # pg_store.py    PostgresIdentityStore
+    pg_store.py      PostgresIdentityStore (Postgres backend, v0.4.0)
   config.py          Thin wrapper: creates store, exposes module-level aliases
-  main.py            FastAPI app + lifespan (file watcher background task)
+  main.py            FastAPI app + lifespan (file watcher + store lifecycle)
+alembic/
+  env.py             Async Alembic environment (sqlalchemy+asyncpg)
+  versions/
+    0001_initial_schema.py   Initial table definitions
+alembic.ini          Alembic config (DSN from MOCK_IDP_PG_DSN at runtime)
 ```
 
 ---
@@ -151,31 +155,43 @@ src/mock_idp/
    ```
 6. Update `config.py` to read these env vars and pass them to `create_store`.
 
-### PostgresIdentityStore sketch
+### PostgresIdentityStore (v0.4.0)
 
-```python
-class PostgresIdentityStore:
-    """Postgres-backed store. Not yet implemented."""
+Implemented in `src/mock_idp/store/pg_store.py`. Key design points:
 
-    def __init__(self, dsn: str) -> None:
-        self._dsn = dsn
-        self._mode = "lax"
-        self._issuer_modes: dict[str, str] = {}
-        self._admin_token = "change-me"
-        self._cors_origins: list[str] = ["*"]
-        self._users: dict[str, UserRecord] = {}
-        self._service_principals: dict[str, ServicePrincipalRecord] = {}
-        self._service_principals_raw: dict[str, ServicePrincipalRecord] = {}
-        self._client_apps: dict[str, ClientAppRecord] = {}
-        self._load_sync()  # blocking at startup; use asyncpg.create_pool in lifespan
+- `__init__()` stores the DSN and initialises empty dicts — no I/O.
+- `startup()` creates the asyncpg connection pool and calls `reload()`.
+- `shutdown()` closes the pool cleanly on server shutdown.
+- `reload()` acquires a connection, fetches all rows from all tables, then
+  applies changes in-place using the same `dict.clear()` + `dict.update()`
+  pattern as `YamlIdentityStore`.
+- The `IdentityStore` protocol was extended in v0.4.0 to include
+  `async startup()` and `async shutdown()` methods. `YamlIdentityStore`
+  implements them as no-ops.
+- `reload()` is now `async` across the entire protocol. `YamlIdentityStore`'s
+  implementation has no `await` expressions but is declared `async def` for
+  protocol compatibility.
 
-    # ... implement @property accessors and reload() ...
+**Activating the Postgres backend:**
 
-    def reload(self) -> None:
-        """Re-query Postgres and update dicts in-place."""
-        # Implementation: SELECT from identities, service_principals, client_apps
-        # tables; diff against current state; apply changes in-place.
-        ...
+```bash
+export MOCK_IDP_BACKEND=postgres
+export MOCK_IDP_PG_DSN=postgresql://user:pass@postgres/mock_idp
+
+# Run migrations first (one-time per database):
+uv sync --extra postgres
+uv run alembic upgrade head
+
+# Start the server:
+uv run uvicorn mock_idp.main:app --port 8080
+```
+
+**Triggering a reload at runtime:**
+
+```bash
+curl -X POST http://localhost:8080/admin/reload-config \
+  -H "x-admin-token: <admin-token>"
+# {"status":"reloaded","users":3,"service_principals":2,"client_apps":1}
 ```
 
 **Schema considerations for Postgres:**

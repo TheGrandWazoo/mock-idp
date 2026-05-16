@@ -3,9 +3,9 @@
 What's not yet shipped, what's worth doing next, and what's parked unless a
 specific need surfaces.
 
-Current release is **v0.3.9**. v0.4 planning is underway — see the v0.4
-candidates section below. The v0.3 surface is documented in ADR-002 and
-ADR-003 and the commit history.
+Current release is **v0.4.0**. The v0.3 surface is documented in ADR-002 and
+ADR-003. The v0.4 surface is documented in ADR-003 (Postgres backend) and the
+commit history.
 
 ---
 
@@ -48,17 +48,6 @@ service_principals:
 **Effort:** ~30 LOC; resolved in `YamlIdentityStore._apply()` before the
 Pydantic model is populated. No new dependencies needed for env/file;
 `hvac` optional for Vault (separate item below).
-
-#### 🟢 Postgres backend (`PostgresIdentityStore`)
-
-Full implementation of the `IdentityStore` protocol backed by Postgres.
-The scaffold and table-schema design are documented in ADR-003.
-
-**Why:** identity data survives pod restarts; enables multi-instance
-deployments where all pods share the same identity store.
-
-**Effort:** ~150 LOC + schema migrations; `asyncpg` or `psycopg[async]`
-dependency; lifespan wiring for the connection pool.
 
 #### 🟡 Secret management (Vault)
 
@@ -309,6 +298,16 @@ makes this possible if the need ever becomes concrete.
 ---
 
 ## Resolved
+
+### v0.4
+
+- ✓ **Postgres backend (`PostgresIdentityStore`, v0.4.0)** — `asyncpg`-backed store behind
+  the `IdentityStore` protocol. `MOCK_IDP_BACKEND=postgres` + `MOCK_IDP_PG_DSN` selects it.
+  Schema managed by Alembic (`alembic upgrade head`). `startup()`/`shutdown()` lifecycle
+  methods for pool management. `POST /admin/reload-config` triggers reload on all backends.
+  `IdentityStore.reload()` is now `async`; `startup`/`shutdown` added to the protocol.
+  Optional deps: `asyncpg`, `sqlalchemy[asyncio]`, `alembic` (install with
+  `uv sync --extra postgres`). See ADR-003 §Adding a new backend.
 
 ### v0.3
 

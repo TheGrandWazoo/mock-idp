@@ -18,23 +18,33 @@ async def _watch_config() -> None:
     watchfiles uses OS-level file-system events (inotify on Linux) so it
     picks up Kubernetes ConfigMap remounts within the kubelet sync window
     (~1 min by default) without polling.
+
+    Only started for the YAML backend — Postgres reloads via POST /admin/reload-config.
     """
     _log.info("Config hot-reload active — watching %s", _cfg.CONFIG_PATH)
     async for _ in awatch(str(_cfg.CONFIG_PATH)):
         _log.info("Config file changed — reloading")
-        _cfg.reload_config()
+        await _cfg.reload_config()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Initialise the store (no-op for YAML; creates pool + loads data for Postgres).
+    await _cfg.store.startup()
+
+    # Start the file watcher only for file-backed backends.
     task = None
     if _cfg.CONFIG_PATH.exists():
         task = asyncio.create_task(_watch_config())
     else:
-        _log.warning(
-            "Config path %s does not exist — hot-reload disabled", _cfg.CONFIG_PATH
+        _log.info(
+            "Config path %s not found — file hot-reload disabled. "
+            "Use POST /admin/reload-config to reload identity data.",
+            _cfg.CONFIG_PATH,
         )
+
     yield
+
     if task:
         task.cancel()
         try:
@@ -42,8 +52,10 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
+    await _cfg.store.shutdown()
 
-app = FastAPI(title="Mock IDP", version="0.3.9", lifespan=lifespan)
+
+app = FastAPI(title="Mock IDP", version="0.4.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cfg.CORS_ORIGINS,
