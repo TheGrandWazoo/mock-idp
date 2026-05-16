@@ -26,26 +26,32 @@ Discovery / OIDC core
 ─────────────────────
 GET  /healthz                                         Kubernetes liveness/readiness
 GET  /{issuer}/.well-known/openid-configuration       OIDC discovery (RFC 8414)
-GET  /{issuer}/jwks                                   JWKS (RFC 7517, public keys)
-POST /{issuer}/token                                  Token endpoint (RFC 6749)
+GET  /{issuer}/jwks                                   JWKS (RFC 7517, public keys — per-issuer)
+POST /{issuer}/token                                  Token endpoint (password / client_credentials /
+                                                       token-exchange grants)
+POST /{issuer}/introspect                             Token introspection (RFC 7662); SP auth required
 GET  /{issuer}/userinfo                               UserInfo endpoint (OIDC Core §5.3)
 
 Negative-case fixtures
 ──────────────────────
-POST /{issuer}/token/wrong-sig                        Signs with unpublished key
+POST /{issuer}/token/wrong-sig                        Signs with unpublished alt key (per-issuer)
+POST /{issuer}/token/unsigned                         alg:none, empty signature
+POST /{issuer}/token/wrong-alg                        HS256 signed with RSA public key as HMAC secret
 GET  /{issuer}/token/malformed                        Returns malformed JWT
 
 Developer ergonomics
 ────────────────────
 GET  /                                                Token playground (HTML)
-POST /debug/decode                                    Decode any JWT, return claims
+POST /debug/decode                                    Decode any JWT; validates against all known issuers
 GET  /debug/identities                                Loaded identities (secrets redacted)
-GET  /debug/config                                    Effective runtime config
+GET  /debug/config                                    Effective runtime config; signing_kids per issuer
 
 Admin
 ─────
-POST /admin/rotate-jwks                               Force-rotate the signing keypair
+POST /admin/rotate-jwks[?issuer=<slug>]               Rotate one issuer's signing key, or all if omitted
                                                        (gated by X-Admin-Token header)
+POST /admin/reload-config                             Reload identity data from the backing store
+                                                       without restarting (gated by X-Admin-Token)
 ```
 
 The `issuer` path parameter is any URL-safe slug — `default`, `tenant-a`,
@@ -350,15 +356,22 @@ No secrets.
 ### `POST /admin/rotate-jwks`
 
 ```text
+# Rotate one issuer's signing key:
+POST /admin/rotate-jwks?issuer=default
+X-Admin-Token: <admin_token from config>
+→ {"status": "rotated", "new_signing_kid": "mock-default-2"}
+
+# Rotate all currently-known issuers:
 POST /admin/rotate-jwks
 X-Admin-Token: <admin_token from config>
+→ {"status": "rotated", "issuers": {"default": "mock-default-2", "tenant-a": "mock-tenant-a-2"}}
 ```
 
-Generates a new RSA-2048 signing keypair, replacing the active signing
-key. Previously-issued tokens stop validating. The new public key shows
-up in `/jwks` immediately.
+Replaces the active signing key for the specified issuer (or all known
+issuers). Previously-issued tokens for those issuers stop validating.
+The new public key appears in `/{issuer}/jwks` immediately.
 
-Use for: testing the gateway's JWKS-cache-invalidation behavior. Without
+Use for: testing JWKS-cache-invalidation behavior on the gateway. Without
 this endpoint, key rotation requires a pod restart.
 
 ---
@@ -376,23 +389,33 @@ Credentials: not allowed (the mock issues bearer tokens, not cookies).
 
 ## Signature key handling
 
-A single RSA-2048 signing keypair is generated at process startup. The
-public half is published via `/jwks` (RFC 7517); the private half signs
-tokens.
+Each issuer path gets its own set of RSA-2048 keys, created lazily on first
+use. There is no shared global key. A request to `/tenant-a/jwks` returns
+a completely different key set from `/tenant-b/jwks` — tokens signed by one
+issuer cannot be verified against another issuer's JWKS.
 
-A second keypair is generated alongside but not published — used only
-by the wrong-signature negative endpoint.
+Each issuer's key set contains four keys:
 
-`POST /admin/rotate-jwks` replaces the active key in place. The
-unpublished alt key is not affected by rotation.
+| Key | Kid pattern | Published? | Purpose |
+|---|---|---|---|
+| Signing | `mock-{issuer}-{n}` | Yes (first in JWKS) | Signs all normal tokens |
+| Alt | `mock-{issuer}-alt` | No | Signs `/token/wrong-sig` tokens only |
+| Decoy 1 | `mock-{issuer}-d1` | Yes | Published but never signs; tests kid-based selection |
+| Decoy 2 | `mock-{issuer}-d2` | Yes | Same |
+
+`POST /admin/rotate-jwks?issuer=<slug>` replaces only that issuer's signing
+key (incrementing `n`). `POST /admin/rotate-jwks` (no `issuer=`) rotates all
+currently-known issuers. Alt and decoy keys are not affected by rotation.
 
 **Implications:**
 
-- No persistence — pod restart rotates both keys.
-- Single replica per pod — multiple replicas would have different keys.
-  `replicas: 1` is enforced.
-- Tokens issued by a previous-generation key will fail signature
-  validation after rotation (intentional — that is the test).
+- No persistence — pod restart regenerates all key stores.
+- Single replica per pod — multiple replicas would generate independent key
+  stores. `replicas: 1` is enforced.
+- Tokens issued by a previous-generation key fail signature validation after
+  rotation (intentional — that is the test).
+- `/debug/config` returns `signing_kids: {"default": "mock-default-1", ...}`
+  (a dict, not a scalar) listing the current signing kid per known issuer.
 
 ---
 
@@ -568,12 +591,93 @@ operator; negligible impact.
 
 | Failure | Impact | Recovery |
 |---|---|---|
-| Pod crash | Both keys lost; previously-issued tokens fail | Restart → new keys → tests re-acquire |
+| Pod crash | All per-issuer key stores lost; previously-issued tokens fail | Restart → new keys → tests re-acquire |
 | OOM (unlikely at this size) | Same as crash | Same |
-| ConfigMap update without pod restart | New identities invisible until restart | `kubectl rollout restart deployment/mock-idp` |
+| ConfigMap update without pod restart | New identities invisible until restart or hot-reload | `POST /admin/reload-config` or `kubectl rollout restart deployment/mock-idp` |
 | Malformed config YAML on startup | Pod fails to start | Fix YAML, re-apply, restart |
 | JWKS endpoint unreachable from gateway | Gateway fails token validation → 503/401 | Verify Service / Ingress; check NetworkPolicy |
-| `/admin/rotate-jwks` called inadvertently | Existing in-flight tokens reject until clients reacquire | Document the test pattern; gate the endpoint behind `admin_token` |
+| `/admin/rotate-jwks` called inadvertently | Existing in-flight tokens for affected issuers reject until clients reacquire | Document the test pattern; gate the endpoint behind `admin_token` |
 | Token playground accidentally exposed publicly | Anyone with the URL can mint tokens | Internal-only ingress, not internet-facing |
 
 No data persistence, so no data-loss failure modes.
+
+---
+
+## Troubleshooting
+
+### Gateway returns 401 for a token that was just issued
+
+1. **JWKS cache stale** — the gateway cached the old key set before a pod
+   restart or `/admin/rotate-jwks` call. Force a JWKS cache flush in the
+   gateway plugin config, or wait for the TTL to expire.
+
+2. **Wrong issuer path** — the gateway's `issuer_url` points at
+   `/tenant-a/...` but the token was minted at `/tenant-b/token`. The `iss`
+   claim won't match. Confirm with `POST /debug/decode` — if
+   `signature_validated_against_published_key` is `false` the keys don't
+   match; check that both the token endpoint and the gateway's discovery URL
+   use the same issuer slug.
+
+3. **Token expired** — short `token_lifetime_seconds` or `X-Test-Expired: 1`
+   was set. Re-issue.
+
+### `POST /token` returns `401 invalid_grant` or `invalid_client`
+
+- **Password grant:** username or password is wrong. Check the `users:` block
+  in your config; passwords are compared as plain strings.
+- **Client credentials:** `client_id` or `client_secret` is wrong. The
+  `client_id` can be either the YAML key (mnemonic alias) or the `client_id`
+  UUID field value — the mock accepts both.
+
+### `POST /token` returns `400 invalid_target`
+
+The issuer is in strict mode (`auth_mode: strict` or `issuer_modes:
+{<slug>: strict}`) and the requested `resource` / `scope` is not in the
+identity's `allowed_audiences`. Either add the audience to the config or
+switch the issuer to `lax`.
+
+### Pod starts but `/healthz` returns 500 or the pod never becomes Ready
+
+The config file failed validation. Look at the pod logs:
+
+```bash
+kubectl logs -n mock-idp deploy/mock-idp
+```
+
+The YAML store logs a structured Pydantic validation error and exits with
+`sys.exit(1)`. Common causes: numeric password (quote it in YAML), unknown
+field name (check for typos — `extra='forbid'` is set on all models), or a
+service principal nested under `users:`.
+
+### `POST /introspect` returns `{"active": false}` for a valid token
+
+1. **Wrong issuer's introspect endpoint** — introspect at `/{issuer}/introspect`
+   uses that issuer's keys. A token from `/tenant-a/token` presented to
+   `/tenant-b/introspect` will always return `{"active": false}`.
+
+2. **Token is expired** — introspect checks `exp` after signature verification.
+   Re-issue a fresh token.
+
+3. **Caller not authenticated** — introspect requires a valid `client_id` +
+   `client_secret` in the form body (any service principal). A missing or wrong
+   credential returns `401`, not `{"active": false}`.
+
+### Token Exchange returns `subject_token signature invalid`
+
+The `subject_token` was issued by a different issuer than the one handling the
+exchange request. The exchange endpoint uses `/{issuer}/jwks` to verify the
+subject token. Issue the subject token from the same issuer path you're
+exchanging at, or use the admin `override_any_claim` identity to bypass
+verification for testing purposes.
+
+### `/debug/config` shows empty `signing_kids`
+
+No requests have been made to any `/{issuer}/...` endpoint yet — key stores
+are created lazily. Issue at least one token or JWKS request first.
+
+### Hot-reload didn't pick up my ConfigMap change
+
+1. Confirm the file was actually remounted: `kubectl exec -n mock-idp deploy/mock-idp -- cat /etc/mock-idp/config.yaml`
+2. The file watcher uses inotify. Check the pod logs for `Reloading config` messages.
+3. Force a reload: `POST /admin/reload-config` with the correct `X-Admin-Token`.
+4. CORS origins are **not** hot-reloadable — they require a pod restart.

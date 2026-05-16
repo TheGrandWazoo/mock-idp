@@ -1,6 +1,6 @@
 # Test Scenarios — Python Mock OIDC
 
-Concrete request/response patterns for the v0.3.7 surface area. Use these
+Concrete request/response patterns for the v0.5.0 surface area. Use these
 as the basis for a regression suite, ad-hoc curl tests, or gateway
 integration tests.
 
@@ -450,7 +450,29 @@ parsing-error handling.
 
 ## JWKS rotation
 
-### S38 — Force-rotate the signing key
+### S38 — Rotate one issuer's signing key
+
+```bash
+curl -X POST "http://mock-idp.example.com/admin/rotate-jwks?issuer=default" \
+  -H "X-Admin-Token: change-me-in-real-deployments"
+```
+
+Response:
+
+```json
+{"status": "rotated", "new_signing_kid": "mock-default-2"}
+```
+
+Then submit a token issued before the rotation to a protected gateway
+route. Gateway behavior depends on its JWKS cache TTL:
+
+- If cache is still warm with the old key → 401
+- After TTL elapses → gateway re-fetches JWKS, picks up the new key
+
+Useful for testing JWKS cache invalidation behavior without disrupting
+tokens for other issuers.
+
+### S38b — Rotate all known issuers at once
 
 ```bash
 curl -X POST http://mock-idp.example.com/admin/rotate-jwks \
@@ -460,16 +482,11 @@ curl -X POST http://mock-idp.example.com/admin/rotate-jwks \
 Response:
 
 ```json
-{"status": "rotated", "new_signing_kid": "<new-thumbprint>"}
+{"status": "rotated", "issuers": {"default": "mock-default-2", "tenant-a": "mock-tenant-a-2"}}
 ```
 
-Then submit a token issued before the rotation to a protected gateway
-route. Gateway behavior depends on its JWKS cache TTL:
-
-- If cache is still warm with the old key → 401
-- After TTL elapses → gateway re-fetches JWKS, picks up the new key
-
-Useful for testing JWKS cache invalidation behavior.
+All in-flight tokens for all issuers are invalidated simultaneously.
+Use at test-suite teardown for a clean slate.
 
 ### S39 — Wrong admin token
 
@@ -605,16 +622,21 @@ Use to test gateway circuit-breaker and error-handling paths.
 
 ## Multi-key JWKS (v0.3.5)
 
+**What this tests:** A real identity provider publishes multiple public keys so that
+gateways can validate tokens signed by any generation of key during a rotation window.
+Gateways should select the key whose `kid` matches the token header — not blindly try
+every key in the JWKS. These scenarios confirm that behavior.
+
 ### S50 — JWKS returns three keys
 
 ```bash
 curl http://mock-idp.example.com/default/jwks | jq '.keys | length'
 ```
 
-Returns `3`. One active signing key (`kid: mock-py-1`) followed by two decoys
-(`mock-py-d1`, `mock-py-d2`). A gateway that selects by `kid` will correctly use only
-the active key; a gateway that blindly tries every key may accept tokens signed by any
-of them.
+Returns `3`. One active signing key (kid `mock-default-1`) followed by two decoys
+(`mock-default-d1`, `mock-default-d2`). A gateway that selects by `kid` will correctly
+use only the active key; a gateway that blindly tries every key may accept tokens signed
+by any of them.
 
 ---
 
@@ -707,6 +729,322 @@ If you see preflight failures in browser dev tools, check
 
 ---
 
+## Token introspection (v0.4.1)
+
+**What this is:** RFC 7662 introspection lets a resource server ask the identity
+provider "is this token still valid?" rather than validating it locally. This is
+useful when you need server-side revocation or when the resource server lacks
+public-key crypto libraries. The mock's introspect endpoint requires the caller
+to authenticate with a valid service-principal credential — unauthenticated
+introspect would let anyone test arbitrary tokens.
+
+**Why you'd use it:** Test that your resource server or API gateway correctly
+handles `{"active": false}` responses (expired tokens, wrong-issuer tokens,
+malformed tokens) and that it requires re-authentication rather than caching
+a "valid" result indefinitely.
+
+### S55 — Active token introspection
+
+```bash
+# 1. Issue a token
+TOKEN=$(curl -s -X POST http://mock-idp.example.com/default/token \
+  -d "grant_type=client_credentials&client_id=service-a" \
+  -d "client_secret=serviceA-secret&resource=api://serviceB" \
+  | jq -r .access_token)
+
+# 2. Introspect it (caller authenticates as service-a)
+curl -X POST http://mock-idp.example.com/default/introspect \
+  -d "token=$TOKEN" \
+  -d "client_id=service-a&client_secret=serviceA-secret"
+```
+
+Response:
+
+```json
+{
+  "active": true,
+  "token_type": "Bearer",
+  "sub": "01010101-1010-1010-1010-aaaaaaaaaaaa",
+  "iss": "http://mock-idp.example.com/default",
+  "aud": "api://serviceB",
+  "exp": 1234567890,
+  "roles": ["m2m"],
+  "azp": "01010101-1010-1010-1010-aaaaaaaaaaaa"
+}
+```
+
+Only claims in the pass-through allowlist (`sub`, `iss`, `aud`, `exp`, `iat`,
+`nbf`, `roles`, `azp`, `tid`, etc.) are returned — arbitrary `extra_claims`
+are not forwarded.
+
+### S56 — Expired token returns `active: false`
+
+```bash
+EXPIRED=$(curl -s -X POST http://mock-idp.example.com/default/token \
+  -H "X-Test-Expired: 1" \
+  -d "grant_type=password&username=alice&password=alice-pw&resource=api://serviceB" \
+  | jq -r .access_token)
+
+curl -X POST http://mock-idp.example.com/default/introspect \
+  -d "token=$EXPIRED" \
+  -d "client_id=service-a&client_secret=serviceA-secret"
+```
+
+→ `{"active": false}`. The token has a valid signature but `exp` is in the past.
+
+### S57 — Wrong-signature token returns `active: false`
+
+```bash
+BAD_SIG=$(curl -s -X POST http://mock-idp.example.com/default/token/wrong-sig \
+  -d "grant_type=client_credentials&client_id=service-a" \
+  -d "client_secret=serviceA-secret&resource=api://serviceB" \
+  | jq -r .access_token)
+
+curl -X POST http://mock-idp.example.com/default/introspect \
+  -d "token=$BAD_SIG" \
+  -d "client_id=service-a&client_secret=serviceA-secret"
+```
+
+→ `{"active": false}`. Signature validation fails; the token was signed by the
+unpublished alt key.
+
+### S58 — Unauthenticated introspect caller returns 401
+
+```bash
+curl -X POST http://mock-idp.example.com/default/introspect \
+  -d "token=$TOKEN" \
+  -d "client_id=service-a&client_secret=WRONG"
+```
+
+→ `401 invalid_client`. The introspect caller must authenticate; anonymous
+introspect is not allowed.
+
+**Troubleshooting:**
+
+- `{"active": false}` for a token you just issued → confirm you're calling
+  `/{same-issuer}/introspect`. A token from `/tenant-a` presented to
+  `/tenant-b/introspect` always returns `{"active": false}` because the keys
+  don't match.
+- `401` on the introspect call → the `client_id` / `client_secret` in the form
+  body is wrong or missing. This is the caller's credential, not the subject
+  token's credential.
+- Missing `token` parameter → `400 token parameter required`.
+
+---
+
+## OAuth 2.0 Token Exchange (v0.4.2)
+
+**What this is:** RFC 8693 token exchange lets a service (the "intermediary")
+present a token it received from a caller and get a new token scoped to a
+downstream service. The new token preserves the original caller's identity
+claims (`sub`, `upn`, etc.) while stamping the intermediary in the `act`
+(actor) claim. This models API gateway or proxy scenarios where a service acts
+on behalf of a user.
+
+**Why you'd use it:** Test that your gateway correctly threads caller identity
+through a multi-hop request chain, and that downstream services can distinguish
+"this token represents alice" from "this token represents the gateway acting as
+alice" via the `act` claim.
+
+### S59 — Basic token exchange
+
+```bash
+# 1. Alice gets a token
+ALICE_TOKEN=$(curl -s -X POST http://mock-idp.example.com/default/token \
+  -d "grant_type=password&username=alice&password=alice-pw&resource=api://serviceB" \
+  | jq -r .access_token)
+
+# 2. Gateway exchanges alice's token for one scoped to serviceC
+curl -X POST http://mock-idp.example.com/default/token \
+  -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+  -d "client_id=service-a&client_secret=serviceA-secret" \
+  -d "subject_token=$ALICE_TOKEN" \
+  -d "subject_token_type=urn:ietf:params:oauth:token-type:access_token" \
+  -d "audience=api://serviceC"
+```
+
+Response:
+
+```json
+{
+  "access_token": "<new-jwt>",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+  "token_type": "Bearer",
+  "expires_in": 3600
+}
+```
+
+The new token's decoded claims:
+
+```json
+{
+  "sub": "11111111-1111-1111-1111-aaaaaaaaaaaa",
+  "preferred_username": "alice@example.com",
+  "aud": "api://serviceC",
+  "azp": "01010101-1010-1010-1010-aaaaaaaaaaaa",
+  "act": {"sub": "01010101-1010-1010-1010-aaaaaaaaaaaa"},
+  "iss": "http://mock-idp.example.com/default"
+}
+```
+
+Alice's identity claims are preserved; `act.sub` identifies the intermediary.
+
+### S60 — Subject identity preserved across exchange
+
+Decode both the original token and the exchanged token. Confirm:
+- `sub`, `oid`, `tid`, `preferred_username` are identical.
+- `azp` in the new token is the intermediary's client_id (service-a's UUID).
+- `act.sub` equals the intermediary's canonical client_id.
+
+Use `POST /debug/decode` on both tokens to compare without writing a parser.
+
+### S61 — Exchange with new audience
+
+Use the `audience` parameter to direct the exchanged token at a different
+resource than the original:
+
+```bash
+# Original token was for api://serviceB; exchange targets api://serviceC
+-d "audience=api://serviceC"
+```
+
+The intermediary must have `api://serviceC` in its `allowed_audiences` (or the
+issuer must be in lax mode) for the exchange to succeed.
+
+### S62 — Expired subject token is rejected
+
+```bash
+EXPIRED=$(curl -s -X POST http://mock-idp.example.com/default/token \
+  -H "X-Test-Expired: 1" \
+  -d "grant_type=password&username=alice&password=alice-pw&resource=api://serviceB" \
+  | jq -r .access_token)
+
+curl -X POST http://mock-idp.example.com/default/token \
+  -d "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+  -d "client_id=service-a&client_secret=serviceA-secret" \
+  -d "subject_token=$EXPIRED" \
+  -d "audience=api://serviceC"
+```
+
+→ `400 subject_token is expired`. Exchange is rejected; the intermediary cannot
+launder an expired token into a fresh one.
+
+**Troubleshooting:**
+
+- `400 subject_token signature invalid` → the subject token was issued by a
+  different issuer. The exchange endpoint verifies the subject token against
+  `/{issuer}/jwks`. Issue both tokens from the same issuer path.
+- `400 subject_token is expired` → the subject token has passed its `exp`.
+  Re-issue it before exchanging. Use `X-Test-Expires-In: 3600` if you need a
+  longer-lived subject token for the test.
+- `401 invalid_client` → the intermediary's `client_id` / `client_secret` is
+  wrong or the intermediary is not configured in the identity store.
+- Missing `act` claim in the exchanged token → check that the intermediary is
+  a service principal (not a user) — `act` is populated from the intermediary's
+  canonical client_id.
+
+---
+
+## Per-issuer signing key isolation (v0.5.0)
+
+**What this is:** Each issuer path (`/default`, `/tenant-a`, `/tenant-b`, etc.)
+has its own independent RSA keypair. A token minted at `/tenant-a/token` cannot
+be verified against `/tenant-b/jwks`, even if both are on the same mock server.
+
+**Why you'd use it:** In a multi-tenant API gateway setup, each tenant's route
+is configured against a different issuer URL. This confirms that a misconfigured
+gateway route — one pointing at the wrong tenant's JWKS — correctly rejects
+tokens from another tenant. Without per-issuer keys, this test would always pass
+trivially because all JWKS responses are identical.
+
+### S63 — Different issuers publish different key sets
+
+```bash
+curl http://mock-idp.example.com/tenant-a/jwks | jq '[.keys[].kid]'
+# ["mock-tenant-a-1", "mock-tenant-a-d1", "mock-tenant-a-d2"]
+
+curl http://mock-idp.example.com/tenant-b/jwks | jq '[.keys[].kid]'
+# ["mock-tenant-b-1", "mock-tenant-b-d1", "mock-tenant-b-d2"]
+```
+
+No kid overlap between the two sets.
+
+### S64 — Token from one issuer fails validation at another issuer's JWKS
+
+```bash
+TOKEN_A=$(curl -s -X POST http://mock-idp.example.com/tenant-a/token \
+  -d "grant_type=password&username=alice&password=alice-pw&resource=api://serviceB" \
+  | jq -r .access_token)
+
+# Introspect using tenant-b's endpoint — should return inactive
+curl -X POST http://mock-idp.example.com/tenant-b/introspect \
+  -d "token=$TOKEN_A" \
+  -d "client_id=service-a&client_secret=serviceA-secret"
+```
+
+→ `{"active": false}`. The token's `kid` is `mock-tenant-a-1`; tenant-b's JWKS
+has no such key.
+
+Use this scenario to confirm the gateway rejects a token whose `kid` is not in
+the configured issuer's JWKS.
+
+### S65 — Rotating one issuer leaves the other unaffected
+
+```bash
+# Check kids before rotation
+curl http://mock-idp.example.com/tenant-a/jwks | jq '.keys[0].kid'
+# "mock-tenant-a-1"
+curl http://mock-idp.example.com/tenant-b/jwks | jq '.keys[0].kid'
+# "mock-tenant-b-1"
+
+# Rotate tenant-a only
+curl -X POST "http://mock-idp.example.com/admin/rotate-jwks?issuer=tenant-a" \
+  -H "X-Admin-Token: change-me-in-real-deployments"
+# {"status": "rotated", "new_signing_kid": "mock-tenant-a-2"}
+
+# tenant-a's kid changed; tenant-b's did not
+curl http://mock-idp.example.com/tenant-a/jwks | jq '.keys[0].kid'
+# "mock-tenant-a-2"
+curl http://mock-idp.example.com/tenant-b/jwks | jq '.keys[0].kid'
+# "mock-tenant-b-1"   ← unchanged
+```
+
+Any tokens issued by tenant-a before the rotation are now invalid; tenant-b
+tokens are unaffected.
+
+### S66 — Check all signing kids via debug endpoint
+
+```bash
+curl http://mock-idp.example.com/debug/config | jq .signing_kids
+```
+
+Returns a dict of all currently-known issuers and their active signing kids:
+
+```json
+{
+  "default": "mock-default-1",
+  "tenant-a": "mock-tenant-a-2",
+  "tenant-b": "mock-tenant-b-1"
+}
+```
+
+Useful for confirming rotation state across a multi-issuer test run.
+
+**Troubleshooting:**
+
+- `signing_kids` is empty → no requests have been made to any `/{issuer}/...`
+  endpoint yet. Issue at least one token or hit `/jwks` first; key stores are
+  created lazily.
+- Token valid at `/debug/decode` (`signature_validated_against_published_key: true`)
+  but gateway returns 401 → the gateway is checking the wrong issuer's JWKS. The
+  decode endpoint tries all known issuers' keys; the gateway only checks the
+  configured issuer's. Confirm the gateway's `issuer_url` matches the `iss` claim
+  in the token.
+- After pod restart, previously-issued tokens always fail → expected. Each restart
+  generates new key stores. Re-acquire tokens after restarting the mock.
+
+---
+
 ## Coverage summary
 
 | Area | Scenarios |
@@ -718,7 +1056,7 @@ If you see preflight failures in browser dev tools, check
 | Admin override | S20–S24 |
 | Token lifetime | S25–S28 |
 | Extra claims | S29–S30 |
-| Multi-issuer | S31–S32 |
+| Multi-issuer (iss isolation) | S31–S32 |
 | Claim omission | S33–S35 |
 | Signature failures | S36–S37 |
 | JWKS rotation | S38–S39 |
@@ -730,6 +1068,9 @@ If you see preflight failures in browser dev tools, check
 | Multi-key JWKS | S50 |
 | Per-issuer auth_mode | S51–S52 |
 | Admin iss override | S53–S54 |
+| Token introspection (RFC 7662) | S55–S58 |
+| Token Exchange (RFC 8693) | S59–S62 |
+| Per-issuer signing key isolation | S63–S66 |
 
-That is the full v0.3.7 surface area. Anything not covered here is either
+That is the full v0.5.0 surface area. Anything not covered here is either
 a v0.4 roadmap item (token introspection, token exchange, config hot-reload, etc.) or out of scope.

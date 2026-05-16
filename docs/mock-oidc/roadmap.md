@@ -3,9 +3,10 @@
 What's not yet shipped, what's worth doing next, and what's parked unless a
 specific need surfaces.
 
-Current release is **v0.4.2**. The v0.3 surface is documented in ADR-002 and
+Current release is **v0.5.0**. The v0.3 surface is documented in ADR-002 and
 ADR-003. The v0.4 surface is documented in ADR-003 (Postgres backend) and the
-commit history.
+commit history. The v0.5 surface is documented in ADR-004 (per-issuer signing
+keys) and the commit history.
 
 ---
 
@@ -17,7 +18,7 @@ commit history.
 
 ---
 
-## v0.4 candidates
+## v0.5 candidates
 
 Items are grouped by theme. Within each group, higher entries are higher
 priority based on effort-to-value ratio.
@@ -65,19 +66,6 @@ secrets into a ConfigMap.
 ---
 
 ### Token fidelity
-
-#### 🟢 Per-issuer signing keys
-
-Each issuer path gets its own keypair. Currently all issuers share one
-signing key.
-
-**Why:** closer to real multi-tenant identity providers (each tenant has
-its own keys). Tests JWKS-isolation correctness — confirms a token from
-issuer A doesn't validate against issuer B's JWKS even if they share a
-`kid`.
-
-**Effort:** ~25 LOC; change signing key from module-level to a
-per-issuer dict; update `/jwks` and signing helpers.
 
 #### 🟢 Configurable signing algorithm per identity
 
@@ -254,8 +242,22 @@ makes this possible if the need ever becomes concrete.
 
 ## Resolved
 
+### v0.5
+
+- ✓ **Per-issuer signing keys (v0.5.0)** — each issuer path now has its own RSA-2048
+  keypair (signing + unpublished alt + 2 decoys), created lazily on first use.
+  `/{issuer}/jwks` returns only that issuer's keys. `POST /admin/rotate-jwks?issuer=<slug>`
+  rotates one issuer; omitting `?issuer=` rotates all known issuers. `/debug/config`
+  returns `signing_kids: {issuer: kid}` dict. 3 new isolation tests (distinct kids,
+  cross-issuer verify fails, single-issuer rotate leaves others untouched). See ADR-004.
+
 ### v0.4
 
+- ✓ **v0.4.3 patch** — `verify_token()` helper in `tokens.py` was accidentally left
+  unstaged when v0.4.2 was committed; the tagged image failed on startup with
+  `ImportError`. OS-level Trivy CVEs resolved by adding `apt-get upgrade` to the
+  Dockerfile. Dependabot added for weekly Python and GitHub Actions updates. Trivy SARIF
+  results now uploaded to the GitHub Security tab.
 - ✓ **Postgres backend (`PostgresIdentityStore`, v0.4.0)** — `asyncpg`-backed store behind
   the `IdentityStore` protocol. `MOCK_IDP_BACKEND=postgres` + `MOCK_IDP_PG_DSN` selects it.
   Schema managed by Alembic (`alembic upgrade head`). `startup()`/`shutdown()` lifecycle

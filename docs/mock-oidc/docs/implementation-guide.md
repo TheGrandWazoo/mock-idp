@@ -158,10 +158,20 @@ Pydantic v2 models: `UserRecord`, `ClientRecord`, `AppConfig`, and
 
 ### `keys.py`
 
-Generates two RSA-2048 keypairs at import: one published via `/jwks`
-(`get_signing_key()`), one unpublished used by the wrong-sig endpoint
-(`get_alt_key()`). `rotate()` replaces the signing key in place and
-returns the new key — called by the admin router.
+Manages per-issuer RSA-2048 key stores. The `_IssuerKeys` class holds a
+signing key, an unpublished alt key, and two decoy keys for each issuer.
+Key stores are created lazily on first use and held in the module-level
+`_stores` dict (protected by a `threading.Lock` for creation only).
+
+Public API:
+- `get_signing_key(issuer)` / `get_alt_key(issuer)` / `get_jwks_keys(issuer)` /
+  `get_signing_public_key_pem(issuer)` — per-issuer accessors.
+- `rotate(issuer=None)` — rotate one issuer or all known issuers; returns the
+  new key (single issuer) or a `{issuer: kid}` dict (all issuers).
+- `all_signing_kids()` — dict of `{issuer: signing_kid}` for all known issuers;
+  used by `/debug/config`.
+- `all_jwks_keys()` — flat list of all published keys across all known issuers;
+  used by `/debug/decode`.
 
 ### `tokens.py`
 
@@ -172,17 +182,27 @@ All claim-building logic: `resolve_aud`, `resolve_shape`, `resolve_expiry`,
 
 ### `routers/oidc.py`
 
-OIDC endpoints (no prefix): `/healthz`, `/{issuer}/.well-known/openid-configuration`,
-`/{issuer}/jwks`, `POST /{issuer}/token`, `POST /{issuer}/token/wrong-sig`,
-`GET /{issuer}/token/malformed`, `GET /{issuer}/userinfo`.
+OIDC endpoints: `/healthz`, `/{issuer}/.well-known/openid-configuration`,
+`/{issuer}/jwks`, `POST /{issuer}/token` (password / client_credentials /
+token-exchange grants), `POST /{issuer}/introspect` (RFC 7662),
+`GET /{issuer}/userinfo`, `POST /{issuer}/token/wrong-sig`,
+`POST /{issuer}/token/unsigned`, `POST /{issuer}/token/wrong-alg`,
+`GET /{issuer}/token/malformed`. Every key call passes `issuer` from the
+route parameter so each endpoint uses that issuer's own keypair.
 
 ### `routers/debug.py`
 
-`/debug/*` endpoints: decode, identities, config.
+`/debug/decode` — decodes any JWT and validates its signature against
+`all_jwks_keys()` (all known issuers' published keys).
+`/debug/identities` — loaded identity store with secrets redacted.
+`/debug/config` — runtime config including `signing_kids` dict
+(`{issuer: kid}` for all known issuers).
 
 ### `routers/admin.py`
 
-`/admin/rotate-jwks` — delegates to `keys.rotate()`.
+`POST /admin/rotate-jwks[?issuer=<slug>]` — delegates to `keys.rotate(issuer)`;
+rotates one issuer or all if `issuer` is omitted.
+`POST /admin/reload-config` — triggers an in-place reload of the identity store.
 
 ### `routers/playground.py`
 
@@ -486,3 +506,52 @@ Test clients request tokens from the ingress hostname
 (`https://mock-idp.example.com/default/token` or the playground at
 `https://mock-idp.example.com/`), then present the JWT to the gateway
 route under test.
+
+---
+
+## Troubleshooting
+
+### Tests fail with `ImportError` or `AttributeError` on startup
+
+Run `uv sync` to ensure all dependencies are installed. If you added a
+dependency, run `uv lock` first then `uv sync`.
+
+### `uv run pytest` passes locally but CI fails
+
+Check that `CONFIG_PATH` and `ISS_BASE` env vars are set. In CI these are
+injected by the workflow; locally you need:
+
+```bash
+export CONFIG_PATH=config.example.yaml
+export ISS_BASE=http://localhost:8080
+```
+
+### Ruff lint fails on a file I didn't touch
+
+Run `uv run ruff check src tests` locally before pushing. Pre-commit also
+runs ruff — install hooks with `uv tool install pre-commit && pre-commit install`.
+
+### The config file changes aren't being picked up in tests
+
+The test suite uses a module-scoped `TestClient` fixture. Config state is
+shared across tests in the same module run. If you need a clean config for a
+specific test, reload via `_cfg.reload_config()` in the test setup or run
+that test in isolation with `pytest tests -k test_name`.
+
+### `keys.py` generates new keypairs on every test run
+
+Correct — keys are generated at process startup. Each `pytest` invocation is a
+fresh process. Tests that check key kids (e.g. `test_jwks_active_kid_matches_token`)
+are self-contained: they fetch the kid from the JWKS in the same test, not from
+a hardcoded expected value.
+
+### Adding a new endpoint — checklist
+
+1. Add the handler in the appropriate router (`routers/`).
+2. If the endpoint uses per-issuer keys, pass `issuer` from the route param to
+   `get_signing_key(issuer)` / `get_jwks_keys(issuer)` etc.
+3. Add at least one happy-path and one failure test in `tests/test_app.py`.
+4. Update `test-scenarios.md` with a new scenario entry and troubleshooting callout.
+5. Update `architecture.md` endpoint table.
+6. If it's a roadmap item, update `roadmap.md` Resolved section and write an
+   ADR if the decision is non-obvious.
