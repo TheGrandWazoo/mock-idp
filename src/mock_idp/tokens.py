@@ -158,6 +158,13 @@ def omit(claims: dict, header_value: Optional[str]) -> None:
             claims.pop(name, None)
 
 
+def apply_roles_override(roles: list[str], headers: dict) -> list[str]:
+    """Apply X-Override-Roles test header if present; otherwise return roles unchanged."""
+    if (override := headers.get("x-override-roles")) is None:
+        return roles
+    return [r.strip() for r in override.split(",") if r.strip()]
+
+
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 

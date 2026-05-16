@@ -9,6 +9,7 @@ from ..webhooks import fire_webhooks
 from ..providers import get_provider
 from ..tokens import (
     apply_overrides,
+    apply_roles_override,
     apply_test_hooks,
     check_audience,
     make_unsigned_token,
@@ -82,7 +83,7 @@ async def token(issuer: str, request: Request):
         check_audience(user_key, user, aud, mode=effective_mode)
         shape = resolve_shape(user.token_version, form, headers.get("x-token-shape"))
         expires_in = resolve_expiry(user.token_lifetime_seconds, headers)
-        roles = resolve_roles(user_key, user, aud)
+        roles = apply_roles_override(resolve_roles(user_key, user, aud), headers)
         token_aud = resolve_user_aud(aud)  # UUID for user tokens; URI unchanged for SPs
         claims = provider.user_claims(issuer, user, token_aud, shape, expires_in, roles, form.get("client_id"))
         signing_alg = user.signing_alg
@@ -95,7 +96,7 @@ async def token(issuer: str, request: Request):
         check_audience(sp_key, sp, aud, mode=effective_mode)
         shape = resolve_shape(sp.token_version, form, headers.get("x-token-shape"))
         expires_in = resolve_expiry(sp.token_lifetime_seconds, headers)
-        roles = resolve_roles(sp_key, sp, aud)
+        roles = apply_roles_override(resolve_roles(sp_key, sp, aud), headers)
         claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, expires_in, roles)
         if sp.override_any_claim:
             apply_overrides(claims, form, allow_iss=sp.override_iss_too)
@@ -132,7 +133,7 @@ async def token(issuer: str, request: Request):
         check_audience(sp_key, sp, aud, mode=effective_mode)
         shape = resolve_shape(sp.token_version, form, headers.get("x-token-shape"))
         expires_in = resolve_expiry(sp.token_lifetime_seconds, headers)
-        roles = resolve_roles(sp_key, sp, aud)
+        roles = apply_roles_override(resolve_roles(sp_key, sp, aud), headers)
 
         # Base claims for the intermediary SP (handles ver, azp/appid, iss, exp, …)
         claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, expires_in, roles)

@@ -3,7 +3,7 @@
 What's not yet shipped, what's worth doing next, and what's parked unless a
 specific need surfaces.
 
-Current release is **v0.5.2**. The v0.3 surface is documented in ADR-002 and
+Current release is **v0.5.3**. The v0.3 surface is documented in ADR-002 and
 ADR-003. The v0.4 surface is documented in ADR-003 (Postgres backend) and the
 commit history. The v0.5 surface is documented in ADR-004 (per-issuer signing
 keys) and the commit history.
@@ -215,6 +215,13 @@ makes this possible if the need ever becomes concrete.
 
 ### v0.5
 
+- ✓ **Role selector in playground + X-Override-Roles header (v0.5.3, issue #26)** —
+  `X-Override-Roles: role1,role2` header accepted on all three grant types
+  (`password`, `client_credentials`, `token-exchange`). When present, replaces
+  `resolve_roles()` output verbatim; empty string → no `roles` claim. Playground
+  adds a checkbox per resolved role (all checked by default) for the selected
+  identity + audience; unchecking sends the header automatically and includes it
+  in the generated curl snippet. 4 new tests (S76–S78).
 - ✓ **Webhook on token issuance (v0.5.2)** — top-level `webhooks:` list in config;
   each entry has `url`, `events: [token_issued]`, and `timeout_seconds: 5`.
   The mock POSTs `{event, timestamp, issuer, grant_type, claims}` to each matching URL

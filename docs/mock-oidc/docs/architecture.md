@@ -290,6 +290,13 @@ If both `resource` and `scope` are provided, `resource` wins. If neither,
 | `X-Omit-Claims: oid,tid,...` | Drop named claims from the issued token |
 | `X-Test-Expired: 1` | Set `exp = now - 60` |
 | `X-Test-Expires-In: <int>` | Set `exp = now + <int>` (negative allowed) |
+| `X-Override-Roles: role1,role2` | Replace the resolved roles list verbatim. Empty string → no roles in token. |
+
+`X-Override-Roles` is accepted on all three grant types (`password`,
+`client_credentials`, `token-exchange`). When present it completely
+replaces whatever `resolve_roles()` would have returned — no merging.
+This is intentional: the header is a test fixture, not a runtime
+permission elevation.
 
 ---
 
@@ -323,6 +330,20 @@ and a destination audience, click "Issue token". Shows:
 
 Identities come from `GET /debug/identities`. No build step; everything
 is rendered HTML so it works in any browser without compilation.
+
+#### Role selector
+
+When an identity and audience are selected, the playground resolves the
+role list for that combination and displays a checkbox per role. All
+boxes are checked by default (matching normal token issuance). Unchecking
+one or more boxes sends `X-Override-Roles: <comma-separated checked
+roles>` with the token request, producing a token with exactly those
+roles. Checking none sends `X-Override-Roles:` (empty), which results in
+a token with no `roles` claim.
+
+The role list is derived from the identity's configuration: grants-table
+roles for the selected audience (if a `clients:` block exists for that
+audience), otherwise the identity's flat `roles` list.
 
 ### `POST /debug/decode`
 

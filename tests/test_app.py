@@ -1220,6 +1220,62 @@ def test_discovery_advertises_both_algorithms(client):
     assert "ES256" in algs
 
 
+# ── X-Override-Roles test header ───────────────────────────────────────────
+
+
+def test_override_roles_password_grant(client):
+    """X-Override-Roles replaces resolved roles in a password-grant token."""
+    r = client.post(
+        "/default/token",
+        headers={"X-Override-Roles": "custom-role,another-role"},
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw",
+              "resource": "api://serviceB"},
+    )
+    assert r.status_code == 200
+    payload = _decode_payload(r.json()["access_token"])
+    assert payload["roles"] == ["custom-role", "another-role"]
+
+
+def test_override_roles_client_credentials(client):
+    """X-Override-Roles replaces resolved roles in a client_credentials token."""
+    r = client.post(
+        "/default/token",
+        headers={"X-Override-Roles": "svc-role"},
+        data={"grant_type": "client_credentials", "client_id": "service-a",
+              "client_secret": "serviceA-secret", "resource": "api://serviceB"},
+    )
+    assert r.status_code == 200
+    payload = _decode_payload(r.json()["access_token"])
+    assert payload["roles"] == ["svc-role"]
+
+
+def test_override_roles_empty_removes_claim(client):
+    """X-Override-Roles with an empty value should produce no roles claim."""
+    r = client.post(
+        "/default/token",
+        headers={"X-Override-Roles": ""},
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw",
+              "resource": "api://serviceB"},
+    )
+    assert r.status_code == 200
+    payload = _decode_payload(r.json()["access_token"])
+    assert payload.get("roles", []) == []
+
+
+def test_override_roles_absent_keeps_configured_roles(client):
+    """Without X-Override-Roles the token carries the identity's resolved roles."""
+    from mock_idp.tokens import resolve_roles
+    expected = sorted(resolve_roles("alice", USERS["alice"], "api://serviceB"))
+    r = client.post(
+        "/default/token",
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw",
+              "resource": "api://serviceB"},
+    )
+    assert r.status_code == 200
+    payload = _decode_payload(r.json()["access_token"])
+    assert sorted(payload.get("roles", [])) == expected
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 

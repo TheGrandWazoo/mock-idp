@@ -1,6 +1,6 @@
 # Test Scenarios — Python Mock OIDC
 
-Concrete request/response patterns for the v0.5.2 surface area. Use these
+Concrete request/response patterns for the v0.5.3 surface area. Use these
 as the basis for a regression suite, ad-hoc curl tests, or gateway
 integration tests.
 
@@ -1260,6 +1260,72 @@ token was issued before the server was last restarted (new keys on each start).
 
 ---
 
+## Role override via X-Override-Roles header (v0.5.3)
+
+### S76 — Override roles on a password grant
+
+**What this is / why you'd use it:** Quickly test how a gateway or downstream service
+behaves when a user token carries a subset of roles, without editing the YAML config.
+
+```bash
+curl -X POST http://mock-idp.example.com/default/token \
+  -H "X-Override-Roles: custom-role,another-role" \
+  -d "grant_type=password&username=alice&password=alice-pw&resource=api://serviceB"
+```
+
+Token payload will contain:
+
+```json
+{ "roles": ["custom-role", "another-role"], ... }
+```
+
+Works identically on `client_credentials` and `token-exchange` grants.
+
+---
+
+### S77 — Strip all roles from a token
+
+**What this is / why you'd use it:** Produce a token with no `roles` claim to verify
+that your authorization layer rejects (or degrades) correctly.
+
+```bash
+curl -X POST http://mock-idp.example.com/default/token \
+  -H "X-Override-Roles: " \
+  -d "grant_type=client_credentials&client_id=service-a&client_secret=serviceA-secret&resource=api://serviceB"
+```
+
+The `roles` claim is omitted entirely from the token.
+
+---
+
+### S78 — Role selector in the playground
+
+**What this is / why you'd use it:** No curl needed — the playground shows a checkbox
+per resolved role when you pick an identity and audience. All boxes are checked by
+default (matching the normal token). Uncheck roles before clicking "Issue Token" to
+send `X-Override-Roles` automatically.
+
+Navigate to `GET /` and:
+
+1. Select an identity (e.g. alice) and an audience (e.g. api://serviceB).
+2. The "Grants" or "Roles" panel shows one checkbox per resolved role, all checked.
+3. Uncheck any role and click "Issue Token".
+4. The issued token payload shows only the checked roles.
+5. The generated `curl` snippet includes the `X-Override-Roles` header.
+
+**Troubleshooting:**
+
+- Checkboxes not appearing → the identity has no roles for the selected audience.
+  Check the `grants:` block under the relevant `client_apps:` entry, or the identity's
+  flat `roles:` list.
+- Role appears in checkbox but not in token → role names are trimmed and split on
+  commas. Make sure the value is not URL-encoded or double-comma-separated.
+- `X-Override-Roles` in curl but not in the playground → the checkbox area only
+  renders when resolved roles are non-empty. Use the curl pattern from S76 directly
+  if you need to inject roles that aren't configured.
+
+---
+
 ## Coverage summary
 
 | Area | Scenarios |
@@ -1286,8 +1352,8 @@ token was issued before the server was last restarted (new keys on each start).
 | Token introspection (RFC 7662) | S55–S58 |
 | Token Exchange (RFC 8693) | S59–S62 |
 | Per-issuer signing key isolation | S63–S66 |
-| Webhook on token issuance | S72–S75 |
 | Configurable signing algorithm | S67–S71 |
+| Webhook on token issuance | S72–S75 |
+| Role override (X-Override-Roles) | S76–S78 |
 
-That is the full v0.5.2 surface area. Anything not covered here is either
-a v0.4 roadmap item (token introspection, token exchange, config hot-reload, etc.) or out of scope.
+That is the full v0.5.3 surface area.

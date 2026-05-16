@@ -415,6 +415,32 @@
       return null;
     }
 
+    function resolvedRoles(sel, aud) {
+      if (!sel || !state.identities) return [];
+      const apps = state.identities.client_apps || {};
+      const app = aud ? apps[aud] : null;
+      if (app) return app.grants?.[sel.key] || [];
+      const isUser = sel.type === 'user';
+      const rec = isUser
+        ? state.identities.users[sel.key]
+        : state.identities.service_principals[sel.key];
+      return rec?.roles || [];
+    }
+
+    function renderRoleCheckboxes(roles) {
+      if (!roles.length) return '';
+      const boxes = roles.map(r =>
+        `<label style="display:inline-flex;align-items:center;gap:0.3rem;margin-right:0.75rem;cursor:pointer">` +
+        `<input type="checkbox" class="role-cb" value="${escapeHtml(r)}" checked>` +
+        `<code>${escapeHtml(r)}</code></label>`
+      ).join('');
+      return `<div style="margin-top:0.6rem">` +
+        `<div class="hint" style="margin-bottom:0.3rem">Role selector — uncheck to remove from token:</div>` +
+        `<div style="display:flex;flex-wrap:wrap;gap:0.3rem 0">${boxes}</div>` +
+        `<div class="hint" style="margin-top:0.25rem">All unchecked → no <code>roles</code> claim.</div>` +
+        `</div>`;
+    }
+
     function getAudience() {
       const audSel = $('aud-select');
       if (audSel) {
@@ -493,47 +519,31 @@
       const apps = (state.identities || {}).client_apps || {};
       const aud = getAudience();
       const app = aud ? apps[aud] : null;
+      const roles = resolvedRoles(sel, aud);
 
-      if (!sel || !app) {
-        panel.hidden = true;
-        return;
-      }
+      if (!sel) { panel.hidden = true; return; }
 
-      const grants = app.grants?.[sel.key] || [];
-      const isAdmin = sel.type === 'sp' &&
-        !!(state.identities.service_principals[sel.key] || {}).override_any_claim;
-
-      const appLabel = app.label ? `${escapeHtml(aud)} · ${escapeHtml(app.label)}` : escapeHtml(aud);
-      const availableRoles = (app.roles || []).map(r => `<code>${escapeHtml(r)}</code>`).join(' ');
-
-      let grantHtml;
-      if (grants.length) {
-        grantHtml = `<span class="grant-ok">✓ ${escapeHtml(grants.join(', '))}</span>`;
+      let html = '';
+      if (app) {
+        const grants = app.grants?.[sel.key] || [];
+        const appLabel = app.label ? `${escapeHtml(aud)} · ${escapeHtml(app.label)}` : escapeHtml(aud);
+        const availableRoles = (app.roles || []).map(r => `<code>${escapeHtml(r)}</code>`).join(' ');
+        const grantHtml = grants.length
+          ? `<span class="grant-ok">✓ ${escapeHtml(grants.join(', '))}</span>`
+          : `<span class="grant-none">No grant configured — token will have empty roles in lax mode, rejected in strict</span>`;
+        html = `<h2>3. Grants · ${appLabel}</h2>` +
+          `<div style="margin-bottom:0.5rem"><span class="hint">Available roles on this app: ${availableRoles || '—'}</span></div>` +
+          `<div style="margin-bottom:0.25rem"><span class="hint" style="margin-right:0.4rem">Resolved for <strong>${escapeHtml(sel.key)}</strong>:</span>${grantHtml}</div>` +
+          renderRoleCheckboxes(roles);
+        panel.innerHTML = html;
+        panel.hidden = false;
+      } else if (roles.length) {
+        html = `<h2>3. Roles</h2>` + renderRoleCheckboxes(roles);
+        panel.innerHTML = html;
+        panel.hidden = false;
       } else {
-        grantHtml = `<span class="grant-none">No grant configured — token will have empty roles in lax mode, rejected in strict</span>`;
+        panel.hidden = true;
       }
-
-      let overrideHtml = '';
-      if (isAdmin) {
-        overrideHtml = `
-          <div class="field" style="margin-top:1rem;max-width:360px">
-            <label for="roles-override">Roles override <span style="color:var(--error-fg);font-weight:normal">(admin only)</span></label>
-            <input type="text" id="roles-override" placeholder="superuser,admin" spellcheck="false">
-            <div class="hint">Comma-separated; replaces the <code>roles</code> claim</div>
-          </div>`;
-      }
-
-      panel.innerHTML = `
-        <h2>3. Grants · ${appLabel}</h2>
-        <div style="margin-bottom:0.5rem">
-          <span class="hint">Available roles on this app: ${availableRoles || '—'}</span>
-        </div>
-        <div style="margin-bottom:0.25rem">
-          <span class="hint" style="margin-right:0.4rem">Resolved for <strong>${escapeHtml(sel.key)}</strong>:</span>
-          ${grantHtml}
-        </div>
-        ${overrideHtml}`;
-      panel.hidden = false;
     }
 
     async function loadIdentities() {
@@ -631,15 +641,17 @@
                    `&resource=${encodeURIComponent(audience)}`;
       }
 
-      // Admin roles override
-      const rolesOverride = ($('roles-override') || {}).value?.trim();
-      if (rolesOverride) {
-        body.set('roles', rolesOverride);
-        curlBody += `&roles=${encodeURIComponent(rolesOverride)}`;
-      }
-
       const headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
       let curlHeaderArg = '';
+
+      // Role selector — send X-Override-Roles when checkboxes are visible
+      const roleCbs = document.querySelectorAll('.role-cb');
+      if (roleCbs.length > 0) {
+        const checkedRoles = Array.from(roleCbs).filter(cb => cb.checked).map(cb => cb.value);
+        headers['X-Override-Roles'] = checkedRoles.join(',');
+        curlHeaderArg += ` \\\n  -H "X-Override-Roles: ${escapeHtml(checkedRoles.join(','))}"`;
+      }
+
       if (shape) {
         headers['X-Token-Shape'] = shape;
         curlHeaderArg += ` \\\n  -H "X-Token-Shape: ${shape}"`;
