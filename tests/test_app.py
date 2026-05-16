@@ -1220,6 +1220,80 @@ def test_discovery_advertises_both_algorithms(client):
     assert "ES256" in algs
 
 
+# ── Secret references (from_env / from_file) ──────────────────────────────
+
+
+def test_secret_from_env_resolves_password(tmp_path):
+    """from_env on a user password is resolved before token issuance."""
+    import os
+    from mock_idp.store.yaml_store import _resolve_secrets
+
+    os.environ["_TEST_PW"] = "env-resolved-password"
+    raw = {
+        "tenants": {
+            "t1": {
+                "users": {
+                    "testuser": {"password": {"from_env": "_TEST_PW"}}
+                }
+            }
+        }
+    }
+    try:
+        resolved = _resolve_secrets(raw, tmp_path / "config.yaml")
+        assert resolved["tenants"]["t1"]["users"]["testuser"]["password"] == "env-resolved-password"
+    finally:
+        os.environ.pop("_TEST_PW", None)
+
+
+def test_secret_from_file_resolves_secret(tmp_path):
+    """from_file on a service principal secret is resolved before token issuance."""
+    from mock_idp.store.yaml_store import _resolve_secrets
+
+    secret_file = tmp_path / "sp-secret"
+    secret_file.write_text("  file-resolved-secret  \n")  # leading/trailing whitespace trimmed
+
+    raw = {
+        "tenants": {
+            "t1": {
+                "service_principals": {
+                    "svc": {"secret": {"from_file": str(secret_file)}}
+                }
+            }
+        }
+    }
+    resolved = _resolve_secrets(raw, tmp_path / "config.yaml")
+    assert resolved["tenants"]["t1"]["service_principals"]["svc"]["secret"] == "file-resolved-secret"
+
+
+def test_secret_plain_string_unchanged(tmp_path):
+    """Plain string secrets are passed through unchanged."""
+    from mock_idp.store.yaml_store import _resolve_secrets
+
+    raw = {"admin_token": "my-plain-token"}
+    resolved = _resolve_secrets(raw, tmp_path / "config.yaml")
+    assert resolved["admin_token"] == "my-plain-token"
+
+
+def test_secret_missing_env_var_raises(tmp_path):
+    """Referencing an unset env var raises ValueError with a clear message."""
+    import os
+    from mock_idp.store.yaml_store import _resolve_secrets
+
+    os.environ.pop("_TEST_MISSING_VAR", None)
+    raw = {"admin_token": {"from_env": "_TEST_MISSING_VAR"}}
+    with pytest.raises(ValueError, match="_TEST_MISSING_VAR"):
+        _resolve_secrets(raw, tmp_path / "config.yaml")
+
+
+def test_secret_missing_file_raises(tmp_path):
+    """Referencing a non-existent file raises ValueError with a clear message."""
+    from mock_idp.store.yaml_store import _resolve_secrets
+
+    raw = {"admin_token": {"from_file": str(tmp_path / "no-such-file")}}
+    with pytest.raises(ValueError, match="no-such-file"):
+        _resolve_secrets(raw, tmp_path / "config.yaml")
+
+
 # ── X-Override-Roles test header ───────────────────────────────────────────
 
 

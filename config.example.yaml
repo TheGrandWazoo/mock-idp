@@ -1,6 +1,14 @@
 auth_mode: lax
 cors_allow_origins: ["*"]
+
+# admin_token accepts a plain string (fine for local dev) or a secret reference.
+# Secret references are resolved at startup and on hot-reload; the resolved value
+# is never written back to disk or exposed through debug endpoints.
 admin_token: change-me-in-real-deployments
+# admin_token:
+#   from_env: MOCK_IDP_ADMIN_TOKEN        # reads os.environ["MOCK_IDP_ADMIN_TOKEN"]
+# admin_token:
+#   from_file: /var/run/secrets/admin-token  # reads file contents (trimmed)
 
 # Per-issuer auth_mode overrides. The URL slug (e.g. /strict-issuer/token)
 # maps to "lax" or "strict", overriding the global auth_mode above.
@@ -22,6 +30,11 @@ tenants:
 
     users:
       alice:
+        # password also accepts a secret reference:
+        # password:
+        #   from_env: MOCK_IDP_ALICE_PASSWORD
+        # password:
+        #   from_file: /var/run/secrets/alice-pw
         password: alice-pw
         upn: alice@example.com
         preferred_username: alice@example.com
@@ -49,6 +62,11 @@ tenants:
     service_principals:
       service-a:
         client_id: 01010101-1010-1010-1010-aaaaaaaaaaaa
+        # secret also accepts a secret reference:
+        # secret:
+        #   from_env: MOCK_IDP_SERVICE_A_SECRET
+        # secret:
+        #   from_file: /var/run/secrets/service-a-secret
         secret: serviceA-secret
         label: ServiceA
         token_version: v1

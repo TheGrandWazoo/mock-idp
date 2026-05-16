@@ -122,15 +122,57 @@ clients:
 |---|---|
 | `auth_mode` | `lax` or `strict`. Default `lax`. |
 | `cors_allow_origins` | List of origins allowed by CORS. Default `["*"]`. |
-| `admin_token` | Required value of `X-Admin-Token` for admin endpoints. |
+| `admin_token` | Required value of `X-Admin-Token` for admin endpoints. Supports secret references. |
 | `webhooks` | List of webhook destinations. Each has `url`, `events` (default `["token_issued"]`), and `timeout_seconds` (default `5`). |
 | `issuer_modes` | Per-issuer `auth_mode` overrides: `{slug: lax\|strict}`. |
+
+### Secret references
+
+Any field that holds a secret (`admin_token`, `users.*.password`,
+`service_principals.*.secret`) accepts a secret reference dict instead of a
+plain string. The reference is resolved at startup (and on hot-reload) before
+the Pydantic model is populated — the running application only ever sees the
+resolved string value.
+
+```yaml
+# Plain string — always works, not recommended for sensitive secrets
+admin_token: change-me
+
+# From environment variable
+admin_token:
+  from_env: MOCK_IDP_ADMIN_TOKEN   # reads os.environ["MOCK_IDP_ADMIN_TOKEN"]
+
+# From a mounted file (contents trimmed)
+admin_token:
+  from_file: /var/run/secrets/mock-idp/admin-token
+
+# Same forms on a user password
+users:
+  alice:
+    password:
+      from_env: MOCK_IDP_ALICE_PASSWORD
+
+# Same forms on a service principal secret
+service_principals:
+  service-a:
+    secret:
+      from_file: /var/run/secrets/service-a-secret
+```
+
+If a referenced environment variable is not set, or a referenced file does not
+exist or cannot be read, the server fails at startup with a clear error message
+identifying the exact field and the missing variable or path. On hot-reload, the
+error is logged and the previous configuration is preserved.
+
+**Security:** the resolved value is stored only in memory and is never written
+back to disk. `GET /debug/identities` and `GET /debug/config` redact all
+password and secret fields as `"***"` regardless of how they were loaded.
 
 **Users**
 
 | Field | Purpose |
 |---|---|
-| `password` | Strict equality check on `grant_type=password`. |
+| `password` | Strict equality check on `grant_type=password`. Accepts a secret reference (`from_env` / `from_file`). |
 | `upn`, `preferred_username` | The `upn` (v1) / `preferred_username` (v2) claim. |
 | `oid` | Object ID — appears as both `sub` and `oid` in the token. |
 | `tid` | Tenant ID. Defaults if omitted. |
@@ -146,7 +188,7 @@ clients:
 | Field | Purpose |
 |---|---|
 | `client_id` | If set on an aliased entry, this is what appears in tokens. If omitted, the YAML key is the client_id. |
-| `secret` | Strict equality check on `grant_type=client_credentials`. |
+| `secret` | Strict equality check on `grant_type=client_credentials`. Accepts a secret reference (`from_env` / `from_file`). |
 | `label` | Human-readable; never appears in tokens. |
 | `token_version`, `token_lifetime_seconds` | Same semantics as on users. |
 | `signing_alg` | `RS256` (default) or `ES256`. |

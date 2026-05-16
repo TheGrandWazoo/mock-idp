@@ -1,6 +1,6 @@
 # Test Scenarios — Python Mock OIDC
 
-Concrete request/response patterns for the v0.5.3 surface area. Use these
+Concrete request/response patterns for the v0.5.4 surface area. Use these
 as the basis for a regression suite, ad-hoc curl tests, or gateway
 integration tests.
 
@@ -1260,6 +1260,79 @@ token was issued before the server was last restarted (new keys on each start).
 
 ---
 
+## Secret references — from_env / from_file (v0.5.4)
+
+### S79 — Load admin token from an environment variable
+
+**What this is / why you'd use it:** Avoid plain-text secrets in ConfigMaps when
+CI secret scanning is in play.
+
+```yaml
+admin_token:
+  from_env: MOCK_IDP_ADMIN_TOKEN
+```
+
+Start the server with the env var set:
+
+```bash
+export MOCK_IDP_ADMIN_TOKEN=my-real-admin-token
+uv run uvicorn mock_idp.main:app --port 8080
+```
+
+The resolved value behaves identically to a plain `admin_token: my-real-admin-token`.
+
+---
+
+### S80 — Load a service principal secret from a mounted file
+
+**What this is / why you'd use it:** Kubernetes Secrets mounted as files — the
+most common secret delivery pattern.
+
+```yaml
+service_principals:
+  service-a:
+    secret:
+      from_file: /var/run/secrets/service-a-secret
+```
+
+File contents are read at startup and trimmed of leading/trailing whitespace.
+If the file does not exist the server refuses to start with a clear error.
+
+---
+
+### S81 — Missing env var fails fast at startup
+
+**What this is / why you'd use it:** Verifying that a misconfigured secret
+reference is caught at startup rather than at first login attempt.
+
+```yaml
+admin_token:
+  from_env: MOCK_IDP_ADMIN_TOKEN
+```
+
+If `MOCK_IDP_ADMIN_TOKEN` is unset:
+
+```text
+Secret resolution failed — config.yaml:admin_token: environment variable
+'MOCK_IDP_ADMIN_TOKEN' is not set
+```
+
+Server exits immediately — no partial startup.
+
+**Troubleshooting:**
+
+- `environment variable 'X' is not set` → set the env var before starting the pod.
+  In Kubernetes: add it to `env:` in the Deployment spec, or source from a Secret via
+  `valueFrom.secretKeyRef`.
+- `cannot read secret file '/path': No such file or directory` → confirm the Secret
+  is mounted at the expected path: `kubectl exec <pod> -- ls /var/run/secrets/`
+- Plain string secrets continue to work — no migration required.
+- Secret values are resolved at startup and on `POST /admin/reload-config`. If you
+  rotate a mounted file or env var, trigger a reload (or restart the pod) to pick up
+  the new value.
+
+---
+
 ## Role override via X-Override-Roles header (v0.5.3)
 
 ### S76 — Override roles on a password grant
@@ -1355,5 +1428,6 @@ Navigate to `GET /` and:
 | Configurable signing algorithm | S67–S71 |
 | Webhook on token issuance | S72–S75 |
 | Role override (X-Override-Roles) | S76–S78 |
+| Secret references (from_env / from_file) | S79–S81 |
 
-That is the full v0.5.3 surface area.
+That is the full v0.5.4 surface area.

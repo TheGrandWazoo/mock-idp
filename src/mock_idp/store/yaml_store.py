@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import difflib
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -17,6 +18,58 @@ _log = logging.getLogger(__name__)
 # Derived from model fields so they stay in sync automatically.
 _VALID_APP_KEYS = set(AppConfig.model_fields)
 _VALID_TENANT_KEYS = set(TenantRecord.model_fields)
+
+
+def _is_secret_ref(v: object) -> bool:
+    return isinstance(v, dict) and ("from_env" in v or "from_file" in v)
+
+
+def _resolve_secret(value: object, location: str) -> str:
+    """Resolve a plain string, {from_env: VAR}, or {from_file: /path} secret value."""
+    if isinstance(value, str):
+        return value
+    if not _is_secret_ref(value):
+        return str(value)
+    ref: dict = value  # type: ignore[assignment]
+    if "from_env" in ref:
+        var = ref["from_env"]
+        if var not in os.environ:
+            raise ValueError(f"{location}: environment variable {var!r} is not set")
+        return os.environ[var]
+    path_str = ref["from_file"]
+    try:
+        return Path(path_str).read_text().strip()
+    except OSError as exc:
+        raise ValueError(f"{location}: cannot read secret file {path_str!r}: {exc}") from exc
+
+
+def _resolve_secrets(raw: dict, config_path: Path) -> dict:
+    """Walk the raw YAML dict and resolve all secret references before validation."""
+    import copy
+    raw = copy.deepcopy(raw)
+
+    if "admin_token" in raw:
+        raw["admin_token"] = _resolve_secret(
+            raw["admin_token"], f"{config_path}:admin_token"
+        )
+
+    for tid, tenant in (raw.get("tenants") or {}).items():
+        if not isinstance(tenant, dict):
+            continue
+        for uname, user in (tenant.get("users") or {}).items():
+            if isinstance(user, dict) and "password" in user:
+                user["password"] = _resolve_secret(
+                    user["password"],
+                    f"{config_path}:tenants.{tid}.users.{uname}.password",
+                )
+        for spname, sp in (tenant.get("service_principals") or {}).items():
+            if isinstance(sp, dict) and "secret" in sp:
+                sp["secret"] = _resolve_secret(
+                    sp["secret"],
+                    f"{config_path}:tenants.{tid}.service_principals.{spname}.secret",
+                )
+
+    return raw
 
 
 def _lint_raw(raw: dict, path: Path) -> None:
@@ -37,22 +90,22 @@ def _lint_raw(raw: dict, path: Path) -> None:
 
         # Numeric passwords: YAML parses unquoted integers as int, not str.
         for uname, user in (tenant.get("users") or {}).items():
-            if isinstance(user, dict) and not isinstance(user.get("password"), (str, type(None))):
-                val = user["password"]
+            pw = user.get("password") if isinstance(user, dict) else None
+            if pw is not None and not isinstance(pw, (str, type(None))) and not _is_secret_ref(pw):
                 _log.warning(
                     '%s: tenants.%s.users.%s.password — YAML parsed %r as %s. '
                     'Quote it to be explicit:  password: "%s"',
-                    path, tid, uname, val, type(val).__name__, val,
+                    path, tid, uname, pw, type(pw).__name__, pw,
                 )
 
         # Numeric secrets on service principals.
         for spname, sp in (tenant.get("service_principals") or {}).items():
-            if isinstance(sp, dict) and not isinstance(sp.get("secret"), (str, type(None))):
-                val = sp["secret"]
+            sec = sp.get("secret") if isinstance(sp, dict) else None
+            if sec is not None and not isinstance(sec, (str, type(None))) and not _is_secret_ref(sec):
                 _log.warning(
                     '%s: tenants.%s.service_principals.%s.secret — YAML parsed %r as %s. '
                     'Quote it to be explicit:  secret: "%s"',
-                    path, tid, spname, val, type(val).__name__, val,
+                    path, tid, spname, sec, type(sec).__name__, sec,
                 )
 
 
@@ -131,6 +184,9 @@ class YamlIdentityStore:
         except ValidationError as exc:
             print(_format_validation_error(exc, path), file=sys.stderr)
             sys.exit(1)
+        except ValueError as exc:
+            print(f"\nSecret resolution failed — {exc}", file=sys.stderr)
+            sys.exit(1)
         self._apply(cfg)
 
     # ── IdentityStore Protocol ─────────────────────────────────────────────
@@ -192,6 +248,9 @@ class YamlIdentityStore:
                 _format_validation_error(exc, self._path),
             )
             return
+        except ValueError as exc:
+            _log.error("Config reload failed — secret resolution error: %s", exc)
+            return
         self._apply(cfg)
         _log.info(
             "Config reloaded from %s: %d users, %d service principals, %d client apps",
@@ -211,9 +270,10 @@ class YamlIdentityStore:
         return {}
 
     def _validate(self, raw: dict) -> AppConfig:
-        """Run the structural linter then validate via Pydantic."""
+        """Run the structural linter, resolve secrets, then validate via Pydantic."""
         if isinstance(raw, dict):
             _lint_raw(raw, self._path)
+            raw = _resolve_secrets(raw, self._path)
         return AppConfig.model_validate(raw)
 
     def _apply(self, cfg: AppConfig) -> None:

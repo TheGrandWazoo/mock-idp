@@ -3,7 +3,7 @@
 What's not yet shipped, what's worth doing next, and what's parked unless a
 specific need surfaces.
 
-Current release is **v0.5.3**. The v0.3 surface is documented in ADR-002 and
+Current release is **v0.5.4**. The v0.3 surface is documented in ADR-002 and
 ADR-003. The v0.4 surface is documented in ADR-003 (Postgres backend) and the
 commit history. The v0.5 surface is documented in ADR-004 (per-issuer signing
 keys) and the commit history.
@@ -24,31 +24,6 @@ Items are grouped by theme. Within each group, higher entries are higher
 priority based on effort-to-value ratio.
 
 ### Backend / persistence
-
-#### 🟢 Secret management (`from_env` / `from_file`)
-
-Load passwords, client secrets, and the admin token from environment
-variables or mounted files instead of plain text in the YAML config.
-
-**Why:** plain-text secrets in a ConfigMap are acceptable for a test
-fixture but problematic in environments with secret-scanning CI checks
-or stricter compliance posture. Kubernetes Secrets mounted at a path is
-the zero-dependency solution.
-
-**Shape:**
-
-```yaml
-service_principals:
-  service-a:
-    secret:
-      from_env: MOCK_IDP_SERVICE_A_SECRET   # reads os.environ
-      # or:
-      from_file: /var/run/secrets/service-a  # reads file contents (trimmed)
-```
-
-**Effort:** ~30 LOC; resolved in `YamlIdentityStore._apply()` before the
-Pydantic model is populated. No new dependencies needed for env/file;
-`hvac` optional for Vault (separate item below).
 
 #### 🟡 Secret management (Vault)
 
@@ -215,6 +190,11 @@ makes this possible if the need ever becomes concrete.
 
 ### v0.5
 
+- ✓ **Secret management — from_env / from_file (v0.5.4, issue #27)** —
+  `admin_token`, user `password`, and SP `secret` fields accept
+  `{from_env: VAR}` or `{from_file: /path}` in addition to plain strings.
+  Resolved at startup and on hot-reload; missing var/file exits with a clear
+  error at startup, logs and preserves state on reload. 5 new tests (S79–S81).
 - ✓ **Role selector in playground + X-Override-Roles header (v0.5.3, issue #26)** —
   `X-Override-Roles: role1,role2` header accepted on all three grant types
   (`password`, `client_credentials`, `token-exchange`). When present, replaces
