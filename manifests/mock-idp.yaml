@@ -20,51 +20,70 @@ data:
   config.yaml: |
     auth_mode: lax
     cors_allow_origins: ["*"]
-    users:
-      alice:
-        password: alice-pw
-        upn: alice@example.com
-        preferred_username: alice@example.com
-        oid: 11111111-1111-1111-1111-aaaaaaaaaaaa
-        tid: 22222222-2222-2222-2222-222222222222
-        token_version: v2
-        token_lifetime_seconds: 300
-        roles: [operator, responder]
-        groups: [platform-team]
-        allowed_audiences: [api://serviceB, api://serviceC]
-        extra_claims:
-          department: engineering
-      bob:
-        password: bob-pw
-        upn: bob@example.com
-        preferred_username: bob@example.com
-        oid: 11111111-1111-1111-1111-bbbbbbbbbbbb
-        token_version: v2
-        token_lifetime_seconds: 300
-        roles: [metrics-reader]
-        groups: [analytics-team]
-        allowed_audiences: [api://serviceB]
-    clients:
-      service-a:
-        client_id: 01010101-1010-1010-1010-aaaaaaaaaaaa
-        secret: serviceA-secret
-        label: ServiceA
-        token_version: v1
-        roles: [m2m]
-        groups: [service-accounts]
-        allowed_audiences: [api://serviceB]
-      service-b:
-        client_id: 02020202-2020-2020-2020-bbbbbbbbbbbb
-        secret: serviceB-secret
-        label: ServiceB
-        token_version: v1
-        roles: [m2m]
-        groups: [service-accounts]
-        allowed_audiences: [api://serviceC]
-      "00000000-0000-0000-0000-000000000000":
-        secret: admin-secret
-        label: TestAdmin
-        override_any_claim: true
+    admin_token:
+      from_env: MOCK_IDP_ADMIN_TOKEN
+
+    tenants:
+      22222222-2222-2222-2222-222222222222:
+        provider: entra_id
+
+        users:
+          alice:
+            password: alice-pw
+            upn: alice@example.com
+            preferred_username: alice@example.com
+            oid: 11111111-1111-1111-1111-aaaaaaaaaaaa
+            token_version: v2
+            token_lifetime_seconds: 300
+            groups: [platform-team]
+            allowed_audiences: [api://serviceB, api://serviceC]
+            extra_claims:
+              department: engineering
+          bob:
+            password: bob-pw
+            upn: bob@example.com
+            preferred_username: bob@example.com
+            oid: 11111111-1111-1111-1111-bbbbbbbbbbbb
+            token_version: v2
+            token_lifetime_seconds: 300
+            groups: [analytics-team]
+            allowed_audiences: [api://serviceB]
+
+        service_principals:
+          service-a:
+            client_id: 01010101-1010-1010-1010-aaaaaaaaaaaa
+            secret: serviceA-secret
+            label: ServiceA
+            token_version: v1
+            groups: [service-accounts]
+            allowed_audiences: [api://serviceB]
+          service-b:
+            client_id: 02020202-2020-2020-2020-bbbbbbbbbbbb
+            secret: serviceB-secret
+            label: ServiceB
+            token_version: v1
+            groups: [service-accounts]
+            allowed_audiences: [api://serviceC]
+          "00000000-0000-0000-0000-000000000000":
+            secret: admin-secret
+            label: TestAdmin
+            override_any_claim: true
+
+        clients:
+          api://serviceB:
+            app_id: 01010101-1010-1010-1010-bbbbbbbbbbbb
+            label: Service B API
+            roles: [operator, responder, m2m]
+            grants:
+              alice: [operator, responder]
+              service-a: [m2m]
+          api://serviceC:
+            app_id: 02020202-2020-2020-2020-cccccccccccc
+            label: Service C API
+            roles: [reader, m2m]
+            grants:
+              alice: [reader]
+              service-b: [m2m]
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -154,10 +173,6 @@ metadata:
   namespace: mock-idp
 spec:
   ingressClassName: nginx
-  tls:
-    - secretName: kong-wildcard-cert
-      hosts:
-        - mock-idp.example.com
   rules:
     - host: mock-idp.example.com
       http:
