@@ -20,6 +20,7 @@ from ..tokens import (
     resolve_shape,
     resolve_user_aud,
     sign,
+    verify_token,
 )
 
 router = APIRouter()
@@ -40,11 +41,17 @@ async def discovery(issuer: str, request: Request):
         "token_endpoint": f"{base}/token",
         "jwks_uri": f"{base}/jwks",
         "userinfo_endpoint": f"{base}/userinfo",
+        "introspection_endpoint": f"{base}/introspect",
         "response_types_supported": ["token", "id_token"],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": ["RS256"],
         "scopes_supported": ["openid", "profile", "email"],
-        "grant_types_supported": ["client_credentials", "password"],
+        "grant_types_supported": [
+            "client_credentials",
+            "password",
+            "urn:ietf:params:oauth:grant-type:token-exchange",
+        ],
+        "introspection_endpoint_auth_methods_supported": ["client_secret_post"],
     }
 
 
@@ -89,6 +96,58 @@ async def token(issuer: str, request: Request):
         claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, expires_in, roles)
         if sp.override_any_claim:
             apply_overrides(claims, form, allow_iss=sp.override_iss_too)
+
+    elif grant_type == "urn:ietf:params:oauth:grant-type:token-exchange":
+        # RFC 8693 — intermediary authenticates, subject identity is preserved.
+        sp_key = form.get("client_id") or ""
+        sp = _cfg.SERVICE_PRINCIPALS.get(sp_key)
+        if not sp or sp.secret != form.get("client_secret"):
+            raise HTTPException(401, "invalid_client")
+
+        subject_token_str = (form.get("subject_token") or "").strip()
+        if not subject_token_str:
+            raise HTTPException(
+                400,
+                detail={"error": "invalid_request", "error_description": "subject_token required"},
+            )
+
+        subject_claims = verify_token(subject_token_str, get_jwks_keys())
+        if subject_claims is None:
+            raise HTTPException(
+                400,
+                detail={"error": "invalid_request", "error_description": "subject_token signature invalid"},
+            )
+        if subject_claims.get("exp", 0) < int(time.time()):
+            raise HTTPException(
+                400,
+                detail={"error": "invalid_request", "error_description": "subject_token is expired"},
+            )
+
+        # audience= takes precedence; fall back to resource/scope.
+        aud = form.get("audience") or resolve_aud(form)
+        check_audience(sp_key, sp, aud, mode=effective_mode)
+        shape = resolve_shape(sp.token_version, form, headers.get("x-token-shape"))
+        expires_in = resolve_expiry(sp.token_lifetime_seconds, headers)
+        roles = resolve_roles(sp_key, sp, aud)
+
+        # Base claims for the intermediary SP (handles ver, azp/appid, iss, exp, …)
+        claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, expires_in, roles)
+
+        # Preserve subject identity from the inbound token.
+        for _c in ("sub", "oid", "tid", "upn", "preferred_username", "unique_name", "name"):
+            if _c in subject_claims:
+                claims[_c] = subject_claims[_c]
+
+        # Record the actor chain per RFC 8693 §4.1.
+        claims["act"] = {"sub": sp._canonical_id}
+
+        omit(claims, headers.get("x-omit-claims"))
+        return {
+            "access_token": sign(claims, get_signing_key()),
+            "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "token_type": "Bearer",
+            "expires_in": max(0, claims["exp"] - int(time.time())),
+        }
 
     else:
         raise HTTPException(400, "unsupported_grant_type")
@@ -216,6 +275,58 @@ async def token_malformed(issuer: str):
             ".signature-bytes-garbage"
         )
     }
+
+
+_INTROSPECT_PASS_THROUGH = {
+    "sub", "iss", "aud", "exp", "iat", "nbf", "jti", "scope",
+    "azp", "preferred_username", "name", "upn", "roles", "groups",
+    "scp", "tid", "appid", "ver",
+}
+
+
+@router.post("/{issuer}/introspect")
+async def introspect(issuer: str, request: Request):
+    """RFC 7662 token introspection.
+
+    The caller must authenticate with a valid service-principal client_id and
+    client_secret.  Returns {"active": true, ...claims} for a valid,
+    non-expired token issued by this server, or {"active": false} for anything
+    else (expired, bad signature, malformed, unknown issuer).
+    """
+    form = dict(await request.form())
+
+    # Authenticate the caller — prevents token disclosure to anonymous clients.
+    caller_id = form.get("client_id") or ""
+    caller_secret = form.get("client_secret") or ""
+    sp = _cfg.SERVICE_PRINCIPALS.get(caller_id)
+    if not sp or sp.secret != caller_secret:
+        raise HTTPException(
+            401,
+            detail={"error": "invalid_client", "error_description": "invalid client credentials"},
+        )
+
+    token_str = (form.get("token") or "").strip()
+    if not token_str:
+        raise HTTPException(
+            400,
+            detail={"error": "invalid_request", "error_description": "token parameter required"},
+        )
+
+    claims = verify_token(token_str, get_jwks_keys())
+    if claims is None:
+        return {"active": False}
+
+    if claims.get("exp", 0) < int(time.time()):
+        return {"active": False}
+
+    response: dict = {"active": True, "token_type": "Bearer"}
+    for claim, value in claims.items():
+        if claim in _INTROSPECT_PASS_THROUGH:
+            response[claim] = value
+    # Map azp → client_id in the RFC 7662 response
+    if "azp" in claims and "client_id" not in response:
+        response["client_id"] = claims["azp"]
+    return response
 
 
 @router.get("/{issuer}/userinfo")

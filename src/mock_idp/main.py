@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
     await _cfg.store.shutdown()
 
 
-app = FastAPI(title="Mock IDP", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="Mock IDP", version="0.4.2", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cfg.CORS_ORIGINS,

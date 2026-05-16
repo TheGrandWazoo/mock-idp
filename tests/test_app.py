@@ -721,6 +721,269 @@ def test_extra_claims_merged(client):
     assert payload.get("cost_center") == "cc-1234"
 
 
+# ── Introspection (RFC 7662) ───────────────────────────────────────────────
+
+
+def _issue_token(client, *, username="alice", password="alice-pw", resource="api://serviceB"):
+    r = client.post(
+        "/default/token",
+        data={"grant_type": "password", "username": username,
+              "password": password, "resource": resource},
+    )
+    assert r.status_code == 200
+    return r.json()["access_token"]
+
+
+def test_introspect_active_token(client):
+    token = _issue_token(client)
+    r = client.post(
+        "/default/introspect",
+        data={"token": token, "client_id": "service-a", "client_secret": "serviceA-secret"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["active"] is True
+    assert "sub" in data
+    assert "exp" in data
+    assert "iss" in data
+    assert data["token_type"] == "Bearer"
+
+
+def test_introspect_claims_passthrough(client):
+    token = _issue_token(client)
+    payload = _decode_payload(token)
+    r = client.post(
+        "/default/introspect",
+        data={"token": token, "client_id": "service-a", "client_secret": "serviceA-secret"},
+    )
+    data = r.json()
+    assert data["sub"] == payload["sub"]
+    assert data["iss"] == payload["iss"]
+    assert data["exp"] == payload["exp"]
+
+
+def test_introspect_expired_token(client):
+    token = _issue_token(client)
+    # Manually backdate the exp claim to simulate expiry via a fresh token with X-Test-Expired.
+    r = client.post(
+        "/default/token",
+        headers={"X-Test-Expired": "1"},
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw",
+              "resource": "api://serviceB"},
+    )
+    expired_token = r.json()["access_token"]
+    r = client.post(
+        "/default/introspect",
+        data={"token": expired_token, "client_id": "service-a", "client_secret": "serviceA-secret"},
+    )
+    assert r.status_code == 200
+    assert r.json() == {"active": False}
+
+
+def test_introspect_wrong_sig_token(client):
+    r = client.post(
+        "/default/token/wrong-sig",
+        data={"grant_type": "client_credentials", "client_id": "service-a",
+              "client_secret": "serviceA-secret", "resource": "api://serviceB"},
+    )
+    bad_token = r.json()["access_token"]
+    r = client.post(
+        "/default/introspect",
+        data={"token": bad_token, "client_id": "service-a", "client_secret": "serviceA-secret"},
+    )
+    assert r.status_code == 200
+    assert r.json() == {"active": False}
+
+
+def test_introspect_malformed_token(client):
+    r = client.post(
+        "/default/introspect",
+        data={"token": "not.a.token", "client_id": "service-a", "client_secret": "serviceA-secret"},
+    )
+    assert r.status_code == 200
+    assert r.json() == {"active": False}
+
+
+def test_introspect_invalid_caller(client):
+    token = _issue_token(client)
+    r = client.post(
+        "/default/introspect",
+        data={"token": token, "client_id": "service-a", "client_secret": "wrong-secret"},
+    )
+    assert r.status_code == 401
+
+
+def test_introspect_missing_token(client):
+    r = client.post(
+        "/default/introspect",
+        data={"client_id": "service-a", "client_secret": "serviceA-secret"},
+    )
+    assert r.status_code == 400
+
+
+def test_introspect_discovery_includes_endpoint(client):
+    r = client.get("/default/.well-known/openid-configuration")
+    data = r.json()
+    assert "introspection_endpoint" in data
+    assert data["introspection_endpoint"].endswith("/default/introspect")
+
+
+# ── Token Exchange (RFC 8693) ──────────────────────────────────────────────
+
+_TOKEN_EXCHANGE = "urn:ietf:params:oauth:grant-type:token-exchange"
+_TOKEN_TYPE_AT = "urn:ietf:params:oauth:token-type:access_token"
+
+
+def _issue_user_token(client, *, username="alice", password="alice-pw", resource="api://serviceB"):
+    r = client.post(
+        "/default/token",
+        data={"grant_type": "password", "username": username,
+              "password": password, "resource": resource},
+    )
+    assert r.status_code == 200
+    return r.json()["access_token"]
+
+
+def test_token_exchange_happy_path(client):
+    user_token = _issue_user_token(client)
+    r = client.post(
+        "/default/token",
+        data={
+            "grant_type": _TOKEN_EXCHANGE,
+            "subject_token": user_token,
+            "subject_token_type": _TOKEN_TYPE_AT,
+            "client_id": "service-a",
+            "client_secret": "serviceA-secret",
+            "audience": "api://serviceB",
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert "access_token" in data
+    assert data["token_type"] == "Bearer"
+    assert data["issued_token_type"] == _TOKEN_TYPE_AT
+
+
+def test_token_exchange_preserves_subject_identity(client):
+    """sub and preferred_username from the inbound user token survive the exchange."""
+    user_token = _issue_user_token(client)
+    user_payload = _decode_payload(user_token)
+
+    r = client.post(
+        "/default/token",
+        data={
+            "grant_type": _TOKEN_EXCHANGE,
+            "subject_token": user_token,
+            "subject_token_type": _TOKEN_TYPE_AT,
+            "client_id": "service-a",
+            "client_secret": "serviceA-secret",
+            "audience": "api://serviceB",
+        },
+    )
+    exchanged = _decode_payload(r.json()["access_token"])
+    assert exchanged["sub"] == user_payload["sub"]
+    assert exchanged.get("preferred_username") == user_payload.get("preferred_username")
+    assert exchanged["iss"] == user_payload["iss"]
+
+
+def test_token_exchange_act_claim(client):
+    """act.sub must identify the intermediary that performed the exchange."""
+    user_token = _issue_user_token(client)
+    r = client.post(
+        "/default/token",
+        data={
+            "grant_type": _TOKEN_EXCHANGE,
+            "subject_token": user_token,
+            "subject_token_type": _TOKEN_TYPE_AT,
+            "client_id": "service-a",
+            "client_secret": "serviceA-secret",
+            "audience": "api://serviceB",
+        },
+    )
+    exchanged = _decode_payload(r.json()["access_token"])
+    assert "act" in exchanged
+    # act.sub identifies the intermediary (service-a's canonical client_id UUID)
+    assert "sub" in exchanged["act"]
+
+
+def test_token_exchange_new_audience(client):
+    """The exchanged token carries the requested audience, not the inbound one."""
+    user_token = _issue_user_token(client, resource="api://serviceB")
+    r = client.post(
+        "/default/token",
+        data={
+            "grant_type": _TOKEN_EXCHANGE,
+            "subject_token": user_token,
+            "subject_token_type": _TOKEN_TYPE_AT,
+            "client_id": "service-a",
+            "client_secret": "serviceA-secret",
+            "audience": "api://serviceC",
+        },
+    )
+    assert r.status_code == 200
+    exchanged = _decode_payload(r.json()["access_token"])
+    assert exchanged["aud"] == "api://serviceC"
+
+
+def test_token_exchange_invalid_subject_token(client):
+    r = client.post(
+        "/default/token",
+        data={
+            "grant_type": _TOKEN_EXCHANGE,
+            "subject_token": "not.a.valid.jwt",
+            "subject_token_type": _TOKEN_TYPE_AT,
+            "client_id": "service-a",
+            "client_secret": "serviceA-secret",
+            "audience": "api://serviceB",
+        },
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"]["error"] == "invalid_request"
+
+
+def test_token_exchange_expired_subject_token(client):
+    expired = client.post(
+        "/default/token",
+        headers={"X-Test-Expired": "1"},
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw",
+              "resource": "api://serviceB"},
+    ).json()["access_token"]
+    r = client.post(
+        "/default/token",
+        data={
+            "grant_type": _TOKEN_EXCHANGE,
+            "subject_token": expired,
+            "subject_token_type": _TOKEN_TYPE_AT,
+            "client_id": "service-a",
+            "client_secret": "serviceA-secret",
+            "audience": "api://serviceB",
+        },
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"]["error"] == "invalid_request"
+
+
+def test_token_exchange_invalid_caller(client):
+    user_token = _issue_user_token(client)
+    r = client.post(
+        "/default/token",
+        data={
+            "grant_type": _TOKEN_EXCHANGE,
+            "subject_token": user_token,
+            "subject_token_type": _TOKEN_TYPE_AT,
+            "client_id": "service-a",
+            "client_secret": "wrong-secret",
+            "audience": "api://serviceB",
+        },
+    )
+    assert r.status_code == 401
+
+
+def test_token_exchange_discovery_includes_grant(client):
+    r = client.get("/default/.well-known/openid-configuration")
+    assert _TOKEN_EXCHANGE in r.json()["grant_types_supported"]
+
+
 # ── Unsupported grant ──────────────────────────────────────────────────────
 
 

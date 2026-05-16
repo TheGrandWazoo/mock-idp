@@ -3,7 +3,7 @@
 What's not yet shipped, what's worth doing next, and what's parked unless a
 specific need surfaces.
 
-Current release is **v0.4.0**. The v0.3 surface is documented in ADR-002 and
+Current release is **v0.4.2**. The v0.3 surface is documented in ADR-002 and
 ADR-003. The v0.4 surface is documented in ADR-003 (Postgres backend) and the
 commit history.
 
@@ -61,51 +61,6 @@ secrets into a ConfigMap.
 ---
 
 ### Protocol surface
-
-#### 🟢 Token introspection (RFC 7662)
-
-```text
-POST /{issuer}/introspect
-token=<jwt>
-client_id=<caller>
-client_secret=<secret>
-```
-
-Returns `{"active": true, "sub": ..., "scope": ...}` or
-`{"active": false}`.
-
-**Why:** gateways and upstream services that prefer to call back to the
-IdP rather than do local JWT validation. Also the prerequisite for
-meaningful token revocation testing.
-
-**Effort:** ~30 LOC + tests.
-
-#### 🟢 OAuth 2.0 Token Exchange (RFC 8693)
-
-Lets an intermediary (e.g., an API gateway) hand in an inbound token
-and get back a new token for a different audience, with the original
-subject preserved and an `act` claim recording the actor chain.
-
-**Why:** the natural pattern for "the gateway receives a user's token,
-needs to mint a service token to call upstream on the user's behalf."
-See `docs/architecture.md` §Flows for a diagram.
-
-**Shape:**
-
-```text
-POST /{issuer}/token
-grant_type=urn:ietf:params:oauth:grant-type:token-exchange
-subject_token=<inbound-jwt>
-subject_token_type=urn:ietf:params:oauth:token-type:access_token
-client_id=<intermediary>
-client_secret=<secret>
-audience=<destination>
-```
-
-Resulting token: `sub` and `preferred_username` preserved from
-`subject_token`; `azp` = intermediary; `act = { sub: intermediary }`.
-
-**Effort:** ~50 LOC + tests.
 
 ---
 
@@ -308,6 +263,16 @@ makes this possible if the need ever becomes concrete.
   `IdentityStore.reload()` is now `async`; `startup`/`shutdown` added to the protocol.
   Optional deps: `asyncpg`, `sqlalchemy[asyncio]`, `alembic` (install with
   `uv sync --extra postgres`). See ADR-003 §Adding a new backend.
+- ✓ **Token introspection (RFC 7662, v0.4.1)** — `POST /{issuer}/introspect`. Caller
+  authenticates with `client_id` + `client_secret` (service principal). Returns
+  `{"active": true, ...claims}` for a valid non-expired token, `{"active": false}` for
+  anything else. Discovery doc advertises `introspection_endpoint`. 8 new tests.
+- ✓ **OAuth 2.0 Token Exchange (RFC 8693, v0.4.2)** — new `token-exchange` grant type on
+  `POST /{issuer}/token`. Intermediary authenticates, inbound `subject_token` is verified
+  (signature + expiry). Outbound token preserves `sub`, `oid`, `tid`, `preferred_username`
+  from the inbound token; adds `act = {"sub": intermediary}`. Roles resolved for the
+  intermediary against the requested audience. Response includes `issued_token_type`. 8 new
+  tests. Discovery `grant_types_supported` updated.
 
 ### v0.3
 
