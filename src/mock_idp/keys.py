@@ -1,19 +1,20 @@
 import threading
 
-from cryptography.hazmat.primitives import serialization
-from authlib.jose import JsonWebKey
+from joserfc.jwk import ECKey, RSAKey
+
+_JWK = RSAKey | ECKey
 
 
-def _new_rsa_key(kid: str) -> JsonWebKey:
-    return JsonWebKey.generate_key("RSA", 2048, is_private=True, options={"kid": kid})
+def _new_rsa_key(kid: str) -> RSAKey:
+    return RSAKey.generate_key(2048, parameters={"kid": kid})
 
 
-def _new_ec_key(kid: str) -> JsonWebKey:
-    return JsonWebKey.generate_key("EC", "P-256", is_private=True, options={"kid": kid})
+def _new_ec_key(kid: str) -> ECKey:
+    return ECKey.generate_key("P-256", parameters={"kid": kid})
 
 
-def key_kid(key: JsonWebKey) -> str:
-    return key.as_dict(is_private=False)["kid"]
+def key_kid(key: _JWK) -> str:
+    return key.kid
 
 
 class _IssuerKeys:
@@ -29,26 +30,23 @@ class _IssuerKeys:
         self.ec_signing = _new_ec_key(f"{prefix}-ec-1")
         self.ec_alt = _new_ec_key(f"{prefix}-ec-alt")
 
-    def jwks_keys(self) -> list[JsonWebKey]:
+    def jwks_keys(self) -> list[_JWK]:
         """RSA signing key, EC signing key, then RSA decoys — tests kid-based selection."""
         return [self.signing, self.ec_signing] + self.decoys
 
-    def rotate(self) -> JsonWebKey:
+    def rotate(self) -> RSAKey:
         self._seq += 1
         self.signing = _new_rsa_key(f"mock-{self._issuer}-{self._seq}")
         return self.signing
 
-    def signing_key_for_alg(self, alg: str) -> JsonWebKey:
+    def signing_key_for_alg(self, alg: str) -> _JWK:
         return self.ec_signing if alg == "ES256" else self.signing
 
-    def alt_key_for_alg(self, alg: str) -> JsonWebKey:
+    def alt_key_for_alg(self, alg: str) -> _JWK:
         return self.ec_alt if alg == "ES256" else self.alt
 
     def signing_public_key_pem(self) -> bytes:
-        return self.signing.as_key().public_bytes(
-            serialization.Encoding.PEM,
-            serialization.PublicFormat.SubjectPublicKeyInfo,
-        )
+        return self.signing.as_pem(private=False)
 
 
 _lock = threading.Lock()
@@ -65,23 +63,23 @@ def _get(issuer: str) -> _IssuerKeys:
             return _stores[issuer]
 
 
-def get_signing_key(issuer: str) -> JsonWebKey:
+def get_signing_key(issuer: str) -> RSAKey:
     return _get(issuer).signing
 
 
-def get_alt_key(issuer: str) -> JsonWebKey:
+def get_alt_key(issuer: str) -> RSAKey:
     return _get(issuer).alt
 
 
-def get_signing_key_for_alg(issuer: str, alg: str) -> JsonWebKey:
+def get_signing_key_for_alg(issuer: str, alg: str) -> _JWK:
     return _get(issuer).signing_key_for_alg(alg)
 
 
-def get_alt_key_for_alg(issuer: str, alg: str) -> JsonWebKey:
+def get_alt_key_for_alg(issuer: str, alg: str) -> _JWK:
     return _get(issuer).alt_key_for_alg(alg)
 
 
-def get_jwks_keys(issuer: str) -> list[JsonWebKey]:
+def get_jwks_keys(issuer: str) -> list[_JWK]:
     return _get(issuer).jwks_keys()
 
 
@@ -89,7 +87,7 @@ def get_signing_public_key_pem(issuer: str) -> bytes:
     return _get(issuer).signing_public_key_pem()
 
 
-def rotate(issuer: str | None = None) -> JsonWebKey | dict[str, str]:
+def rotate(issuer: str | None = None) -> RSAKey | dict[str, str]:
     if issuer is not None:
         return _get(issuer).rotate()
     with _lock:
@@ -103,7 +101,7 @@ def all_signing_kids() -> dict[str, str]:
         return {name: key_kid(store.signing) for name, store in _stores.items()}
 
 
-def all_jwks_keys() -> list[JsonWebKey]:
+def all_jwks_keys() -> list[_JWK]:
     """All published keys across all known issuers — for debug/decode only."""
     with _lock:
         stores = list(_stores.values())

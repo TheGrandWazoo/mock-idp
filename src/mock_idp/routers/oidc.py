@@ -60,7 +60,7 @@ async def discovery(issuer: str, request: Request):
 async def jwks(issuer: str, request: Request):
     headers = {k.lower(): v for k, v in request.headers.items()}
     await apply_test_hooks(headers)
-    return {"keys": [k.as_dict(is_private=False) for k in get_jwks_keys(issuer)]}
+    return {"keys": [k.as_dict(private=False) for k in get_jwks_keys(issuer)]}
 
 
 @router.post("/{issuer}/token")

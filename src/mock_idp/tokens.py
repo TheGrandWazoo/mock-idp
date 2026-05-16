@@ -5,8 +5,9 @@ import hmac as _hmac
 import json as _json
 from typing import Optional
 
-from authlib.jose import JsonWebKey, jwt
 from fastapi import HTTPException
+from joserfc import jwt as _jwt
+from joserfc.jwk import ECKey, KeySet, RSAKey
 
 from . import config as _cfg
 from .keys import key_kid
@@ -222,37 +223,17 @@ def redact(d: object) -> object:
     return d
 
 
-def sign(claims: dict, key: JsonWebKey) -> str:
-    kty = key.as_dict(is_private=False)["kty"]
-    alg = "ES256" if kty == "EC" else "RS256"
+def sign(claims: dict, key: RSAKey | ECKey) -> str:
+    alg = "ES256" if isinstance(key, ECKey) else "RS256"
     header = {"alg": alg, "typ": "JWT", "kid": key_kid(key)}
-    return jwt.encode(header, claims, key).decode("utf-8")
+    return _jwt.encode(header, claims, key)
 
 
-def verify_token(token_str: str, keys: list[JsonWebKey]) -> dict | None:
-    """Verify a JWT against a set of public keys.
-
-    Parses the token header, finds the matching key by kid (falls back to
-    trying all keys), and returns the decoded claims on success or None on any
-    failure.  Does NOT check exp — callers are responsible for that.
-    """
+def verify_token(token_str: str, keys: list[RSAKey | ECKey]) -> dict | None:
+    """Verify a JWT against a set of public keys, returning claims or None on failure."""
     if not token_str:
         return None
     try:
-        parts = token_str.split(".")
-        if len(parts) != 3:
-            return None
-        padding = "=" * (-len(parts[0]) % 4)
-        header = _json.loads(base64.urlsafe_b64decode(parts[0] + padding))
-        token_kid = header.get("kid")
+        return _jwt.decode(token_str, KeySet(keys)).claims
     except Exception:
         return None
-
-    # Prefer the key whose kid matches; fall back to trying all keys.
-    ordered = sorted(keys, key=lambda k: (key_kid(k) != token_kid)) if token_kid else keys
-    for key in ordered:
-        try:
-            return dict(jwt.decode(token_str, key))
-        except Exception:
-            continue
-    return None
