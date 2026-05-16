@@ -208,3 +208,32 @@ def redact(d: object) -> object:
 def sign(claims: dict, key: JsonWebKey) -> str:
     header = {"alg": "RS256", "typ": "JWT", "kid": key_kid(key)}
     return jwt.encode(header, claims, key).decode("utf-8")
+
+
+def verify_token(token_str: str, keys: list[JsonWebKey]) -> dict | None:
+    """Verify a JWT against a set of public keys.
+
+    Parses the token header, finds the matching key by kid (falls back to
+    trying all keys), and returns the decoded claims on success or None on any
+    failure.  Does NOT check exp — callers are responsible for that.
+    """
+    if not token_str:
+        return None
+    try:
+        parts = token_str.split(".")
+        if len(parts) != 3:
+            return None
+        padding = "=" * (-len(parts[0]) % 4)
+        header = _json.loads(base64.urlsafe_b64decode(parts[0] + padding))
+        token_kid = header.get("kid")
+    except Exception:
+        return None
+
+    # Prefer the key whose kid matches; fall back to trying all keys.
+    ordered = sorted(keys, key=lambda k: (key_kid(k) != token_kid)) if token_kid else keys
+    for key in ordered:
+        try:
+            return dict(jwt.decode(token_str, key))
+        except Exception:
+            continue
+    return None
