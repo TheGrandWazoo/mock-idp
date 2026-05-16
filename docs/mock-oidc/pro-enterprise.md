@@ -44,10 +44,11 @@ A team gets a persistent subdomain:
 - Config upload: `PUT /api/orgs/{slug}/config` → stores YAML, triggers hot-reload
 - Routing: nginx `proxy_pass` to a pool of mock-idp instances keyed by slug
 
-**Postgres subchart:** Use `bitnami/postgresql` as a Helm chart dependency
-(see [Postgres / Helm notes](#postgres--helm-notes) below). The Bitnami chart
-is battle-tested and eliminates the need to build PV management, initContainers,
-and secrets handling from scratch.
+**Postgres subchart:** Use a minimal custom subchart wrapping the official
+`postgres:16-alpine` image (see [Postgres / Helm notes](#postgres--helm-notes)
+below). Do not use `bitnami/postgresql` — Bitnami moved their maintained images
+to a paid subscription in 2024; the public Docker Hub images are stale and
+not kept up for security.
 
 ---
 
@@ -131,32 +132,52 @@ chart with an Enterprise license key.
 
 ## Postgres / Helm notes
 
-The `bitnami/postgresql` chart is the recommended approach for both the hosted
-endpoint and the self-hosted Pro tier. It provides:
+**Do not use `bitnami/postgresql`.** In 2024 Bitnami moved their maintained
+images to a paid subscription (`registry.bitnami.com`). The free images on
+Docker Hub are no longer updated for security. The chart is still open source
+but it defaults to the stale images, which defeats the purpose.
 
-- PersistentVolumeClaim management
-- Init scripts via ConfigMap
-- TLS support
-- `bitnami/postgresql-ha` for high-availability (Enterprise tier)
-- Automated credential generation via Kubernetes secrets
+### Pro tier — minimal custom subchart
 
-**Do not build a custom subchart from scratch.** Add it as a chart dependency:
+Write a small subchart using the **official Docker Hub `postgres:16-alpine`
+image**. Docker Official Images are free, maintained by the Docker team, and
+Trivy scans catch CVEs before they reach the cluster. The mock-idp Pro use
+case (single-replica, token audit log, org registry) does not need the
+complexity of a full operator.
+
+Subchart scope:
+- `Deployment` or `StatefulSet` with `postgres:16-alpine`
+- `PersistentVolumeClaim` for data directory
+- `Secret` for credentials (generated on install)
+- `Service` (ClusterIP)
+- Init ConfigMap for schema (`alembic upgrade head` run as an init container
+  from the mock-idp image)
+
+This is ~200 lines of YAML and gives full control over the image, storage
+class, and resource limits without a third-party dependency.
+
+### Enterprise tier — CloudNativePG (CNPG)
+
+For Enterprise HA (failover, S3 backups, point-in-time recovery), use the
+**CloudNativePG operator** (`cnpg-io/cloudnative-pg`):
+
+- CNCF sandbox project (2022), actively maintained
+- Uses the official `ghcr.io/cloudnative-pg/postgresql` images (based on
+  official Postgres, rebuilt regularly with CVE patches)
+- Kubernetes-native CRD (`Cluster` resource) — no StatefulSet to manage
+- Includes streaming replication, automated failover, scheduled backups to S3
 
 ```yaml
-# chart/Chart.yaml
-dependencies:
-  - name: postgresql
-    version: "16.x.x"
-    repository: https://charts.bitnami.com/bitnami
-    condition: postgresql.enabled
+# values.yaml — Enterprise installs opt into CNPG
+cnpg:
+  enabled: true
+  instances: 3
+  storage:
+    size: 10Gi
 ```
 
-The Bitnami images are published to `registry.bitnami.com` and are updated
-frequently. They are acceptable for production use; Trivy scans in CI catch
-any OS-level CVEs before they reach the cluster.
-
-Alternatively, override `postgresql.image` to use the official `postgres:16-alpine`
-image if image provenance is a concern — the Bitnami chart supports image overrides.
+CNPG is the right path for any Enterprise customer that asks for HA or needs
+point-in-time recovery for the audit log.
 
 ---
 
