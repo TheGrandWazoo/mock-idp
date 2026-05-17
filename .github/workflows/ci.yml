@@ -27,6 +27,8 @@ permissions:
 
 env:
   IMAGE: ghcr.io/thegrandwazoo/mock-idp
+  OWNER: thegrandwazoo
+  PACKAGE: mock-idp
 
 jobs:
   lint-test:
@@ -34,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v8
         with:
           enable-cache: true
 
@@ -54,12 +56,21 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint-test
     permissions:
-      contents: read
-      packages: write
+      contents: write       # create/delete releases and git tags
+      packages: write       # push and delete GHCR images
       security-events: write
 
     steps:
       - uses: actions/checkout@v6
+
+      - name: Extract version
+        id: ver
+        run: |
+          V=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          S="${GITHUB_SHA:0:7}"
+          echo "version=$V"            >> "$GITHUB_OUTPUT"
+          echo "short_sha=$S"          >> "$GITHUB_OUTPUT"
+          echo "sha_tag=${V}-sha-${S}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
@@ -69,20 +80,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract image metadata
+      - name: Extract image metadata (release tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            # PRs: no tag (build only)
-            # main branch: sha-<hash>
-            type=sha,prefix=sha-,enable=${{ github.ref == 'refs/heads/main' }}
-            # pre-release tags (alpha/beta/rc): version tag only, no latest
-            type=match,pattern=v(\d+\.\d+\.\d+-.+),group=1
-            # release tags: version tag + latest
+            # pre-release tags (v1.2.3-alpha, -beta, -rc): version tag only, no latest
+            type=match,pattern=v(\d+\.\d+\.\d+-.+),group=1,enable=${{ contains(github.ref, '-') }}
+            # stable release tags: version tag + latest
             type=match,pattern=v(\d+\.\d+\.\d+$),group=1
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
+            type=raw,value=latest,enable=${{ !contains(github.ref, '-') }}
 
       - name: Build image
         uses: docker/build-push-action@v7
@@ -113,15 +122,15 @@ jobs:
           echo "Testing password grant..."
           TOKEN=$(curl -sf -X POST http://localhost:8080/smoke/token \
             -d 'grant_type=password&username=alice&password=alice-pw&resource=api://serviceB' \
-            | jq -r .access_token)
-          [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ] \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))")
+          [ -n "$TOKEN" ] \
             || { echo "ERROR: password grant returned no token"; docker logs mock-idp-smoke; exit 1; }
 
           echo "Testing client_credentials grant..."
           TOKEN=$(curl -sf -X POST http://localhost:8080/smoke/token \
             -d 'grant_type=client_credentials&client_id=01010101-1010-1010-1010-aaaaaaaaaaaa&client_secret=serviceA-secret&resource=api://serviceB' \
-            | jq -r .access_token)
-          [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ] \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))")
+          [ -n "$TOKEN" ] \
             || { echo "ERROR: client_credentials grant returned no token"; docker logs mock-idp-smoke; exit 1; }
 
           echo "All smoke tests passed."
@@ -155,11 +164,127 @@ jobs:
           vuln-type: os,library
           severity: CRITICAL,HIGH
 
-      - name: Push image
-        if: github.event_name != 'pull_request'
+      # ── sha build (push to main) ────────────────────────────────────────
+
+      - name: Push sha image
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          TAG="${{ steps.ver.outputs.sha_tag }}"
+          docker tag mock-idp:smoke "${{ env.IMAGE }}:${TAG}"
+          docker push "${{ env.IMAGE }}:${TAG}"
+
+      - name: Create sha draft release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          SHA_TAG="${{ steps.ver.outputs.sha_tag }}"
+          gh release create "v${SHA_TAG}" \
+            --title "v${SHA_TAG}" \
+            --draft \
+            --target "$GITHUB_SHA" \
+            --notes "Development build toward v${V}. Image: \`${{ env.IMAGE }}:${SHA_TAG}\`"
+
+      - name: Clean up previous sha drafts and images
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          CURRENT_TAG="v${{ steps.ver.outputs.sha_tag }}"
+          CURRENT_IMG="${{ steps.ver.outputs.sha_tag }}"
+
+          # Delete old draft releases for this version milestone (not the one just created)
+          gh release list --json tagName,isDraft --limit 100 | \
+            python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+v, current = '$V', '$CURRENT_TAG'
+for r in data:
+    tag = r['tagName']
+    if r['isDraft'] and tag != current and tag.startswith(f'v{v}-sha-'):
+        print(tag)
+" | while IFS= read -r tag; do
+              echo "Removing old sha draft: $tag"
+              gh release delete "$tag" --cleanup-tag --yes
+            done
+
+          # Delete old GHCR image versions for this version milestone
+          gh api "/users/${{ env.OWNER }}/packages/container/${{ env.PACKAGE }}/versions?per_page=100" | \
+            python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+v, current = '$V', '$CURRENT_IMG'
+for ver in data:
+    tags = ver.get('metadata', {}).get('container', {}).get('tags', [])
+    for tag in tags:
+        if tag.startswith(f'{v}-sha-') and tag != current:
+            print(ver['id'])
+            break
+" | while IFS= read -r vid; do
+              echo "Removing old GHCR image version: $vid"
+              gh api -X DELETE "/users/${{ env.OWNER }}/packages/container/${{ env.PACKAGE }}/versions/${vid}"
+            done
+
+      # ── release tag (v*) ───────────────────────────────────────────────
+
+      - name: Push release image
+        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
         run: |
           while IFS= read -r tag; do
             [ -z "$tag" ] && continue
             docker tag mock-idp:smoke "$tag"
             docker push "$tag"
           done <<< "${{ steps.meta.outputs.tags }}"
+
+      - name: Clean up sha drafts and images for this version
+        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+
+          # Delete all sha draft releases for this milestone
+          gh release list --json tagName,isDraft --limit 100 | \
+            python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+v = '$V'
+for r in data:
+    tag = r['tagName']
+    if r['isDraft'] and tag.startswith(f'v{v}-sha-'):
+        print(tag)
+" | while IFS= read -r tag; do
+              echo "Removing sha draft: $tag"
+              gh release delete "$tag" --cleanup-tag --yes
+            done
+
+          # Delete all GHCR sha image versions for this milestone
+          gh api "/users/${{ env.OWNER }}/packages/container/${{ env.PACKAGE }}/versions?per_page=100" | \
+            python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+v = '$V'
+for ver in data:
+    tags = ver.get('metadata', {}).get('container', {}).get('tags', [])
+    for tag in tags:
+        if tag.startswith(f'{v}-sha-'):
+            print(ver['id'])
+            break
+" | while IFS= read -r vid; do
+              echo "Removing sha GHCR image: $vid"
+              gh api -X DELETE "/users/${{ env.OWNER }}/packages/container/${{ env.PACKAGE }}/versions/${vid}"
+            done
+
+      - name: Create release draft
+        if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          REF_TAG="${GITHUB_REF#refs/tags/}"
+          gh release create "$REF_TAG" \
+            --title "$REF_TAG" \
+            --draft \
+            --notes "Release $REF_TAG. Image: \`${{ env.IMAGE }}:${V}\`"
