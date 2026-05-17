@@ -45,14 +45,14 @@ A team gets a persistent subdomain:
 **Why this first:**
 - Zero setup — works from ephemeral CI runners without a sidecar container
 - Eliminates the main friction point for new adopters
-- Routing layer is a thin nginx/Caddy reverse-proxy in front of the existing image
+- Routing layer is Cilium Gateway API — `GatewayClass` → `Gateway` → per-org `HTTPRoute`
 - Billing surface: per-org slug gated behind an API key
 
 **Implementation sketch:**
 - Slug registry (Postgres): `org_slug → config_id`
 - Provisioning API: `POST /api/orgs` → creates slug, returns API key
 - Config upload: `PUT /api/orgs/{slug}/config` → stores YAML, triggers hot-reload
-- Routing: nginx `proxy_pass` to a pool of mock-idp instances keyed by slug
+- Routing: `HTTPRoute` per org slug → mock-idp backend `Service`
 
 **Postgres subchart:** Use a minimal custom subchart wrapping the official
 `postgres:16-alpine` image (see [Postgres / Helm notes](#postgres--helm-notes)
@@ -97,17 +97,27 @@ customer's IdP — see Enterprise section).
 
 ---
 
-### 4. Rate limiting — Kong on hosted endpoint
+### 4. Rate limiting — Cilium Gateway API on hosted endpoint
 
-The hosted endpoint runs Kong in front of mock-idp instances. Kong handles:
-- Per-org rate limiting (configured at provisioning time via Kong Admin API)
-- Request logging to the audit pipeline
-- Circuit breaking if a mock-idp pod is unhealthy
-- Future: authentication plugins for org API key validation
+The hosted endpoint uses Cilium's native Gateway API implementation.
+Per-org rate limiting is enforced at the `HTTPRoute` layer via Cilium
+HTTPRoute filter extensions — no separate API gateway process, no extra
+Postgres instance.
 
-**Implementation:** Kong Ingress Controller on Linode LKE; `KongPlugin`
-CRD per org namespace. Community/self-hosted instances use the in-app
-`slowapi` rate limiter instead.
+Per-org limits are set at provisioning time by patching the org's
+`HTTPRoute` resource. Cilium enforces them in the eBPF dataplane.
+
+Community/self-hosted instances use the in-app `slowapi` rate limiter
+(single-instance; see Community section above).
+
+**Why not Kong:** Kong is a strong integration *target* (mock-idp issues
+tokens that Kong validates — see ecosystem docs). Running Kong as our own
+infrastructure layer adds a second Postgres instance and significant
+operational overhead before we have a single paying customer. Cilium
+Gateway API replaces it cleanly and we already run Cilium as the CNI.
+Revisit Kong for the hosted endpoint if we need a developer portal,
+publishable API catalog, or per-customer analytics dashboards — those are
+post-$10k/month concerns.
 
 ### 5. Webhook reliability
 
@@ -165,7 +175,7 @@ is already there; the Enterprise chart makes it turnkey.
 
 **Cilium network policy**
 Kubernetes `NetworkPolicy` manifests using Cilium CiliumNetworkPolicy CRDs:
-- Ingress: only Kong/nginx can reach mock-idp pods
+- Ingress: only Gateway API pods (Cilium envoy proxy) can reach mock-idp pods
 - Egress: only webhook destinations and Vault (no arbitrary outbound)
 - Admin endpoints (`/admin/*`): restricted to cluster-internal callers only
 - WireGuard node encryption enabled (Cilium feature, zero config)
@@ -264,7 +274,7 @@ Prioritized by time-to-revenue:
 2. **Hosted endpoint** (Pro, v0.7.0) — routing layer + slug registry + billing gate
 3. **Token audit log** (Pro, v0.6.0) — differentiates Pro from Community immediately
 4. **Web admin UI** (Pro/Enterprise, v0.8.0) — depends on Postgres backend (v0.4.0 already shipped)
-5. **Kong rate limiting** (Pro, v0.7.0) — gates hosted endpoint at org level
+5. **Cilium Gateway API rate limiting** (Pro, v0.7.0) — per-org HTTPRoute limits at the eBPF layer
 6. **Webhook reliability** — pull forward when a customer asks
 7. **SSO/SAML** — required for first Enterprise sale
 8. **Vault sidecar integration** — required for regulated-industry Enterprise sale
@@ -278,11 +288,51 @@ Prioritized by time-to-revenue:
 
 - **Hosted endpoint:** Linode LKE (Akamai Cloud managed Kubernetes).
   Start: 1 worker node + free managed control plane. Scale by adding nodes.
-- **CNI:** Cilium — Layer 7 network policies, WireGuard encryption, Hubble observability.
-- **API gateway:** Kong Ingress Controller — per-org rate limiting, request logging,
-  circuit breaking. `KongPlugin` CRD per org.
-- **Ingress:** nginx for community/local; Kong for hosted Pro endpoint.
+- **CNI + Gateway: Cilium** — single control plane for networking, L7 policy,
+  and ingress. Cilium Gateway API implementation replaces a separate ingress
+  controller. `GatewayClass` → `Gateway` → per-org `HTTPRoute`. WireGuard
+  node-to-node encryption and Hubble observability included at zero extra cost.
+- **Why Kubernetes Gateway API over nginx Ingress:** nginx's governance
+  deteriorated after F5's acquisition (core developer forked to `freenginx`
+  in 2024). The Kubernetes `Ingress` API is in maintenance mode — Gateway API
+  is the forward standard from SIG-Network. Cilium's native Gateway API
+  implementation means no separate ingress controller process at all.
 - **CI/CD self-hosted runner:** Proxmox lab → k3s cluster → GitHub Actions
   self-hosted runner. Planned; see roadmap.
 - **Postgres:** `postgres:16-alpine` (custom subchart for Pro); CloudNativePG
   operator for Enterprise HA. See [Postgres / Helm notes](#postgres--helm-notes) above.
+
+---
+
+## Base Image Policy
+
+Container base image decisions follow the same governance principle as all
+other technology choices: prefer community-governed projects with credible
+maintainer lineage; avoid images controlled by vendors with a track record
+of hostile or erratic stewardship.
+
+| Build | Base image | Rationale |
+|---|---|---|
+| **Community** | `python:3.x-slim-bookworm` (Debian) | Familiar, predictable, well-supported. Debian is the canonical community-governed Linux — no corporate parent, 30-year track record. |
+| **Pro** | `python:3.x-alpine` | Smaller attack surface, musl libc, minimal CVE surface. Test for C-extension compatibility. Trivy-scanned on every build. |
+| **Enterprise / FIPS** | `cgr.dev/chainguard/python` | Daily rebuilds, cosign-signed via sigstore, near-zero CVEs, distroless-adjacent. Chainguard was founded by Dan Lorenc (co-creator of sigstore/cosign) — the team that wrote the supply chain security tooling everyone else uses. Strongest lineage for regulated customers. |
+
+**Images to avoid:**
+
+- **Bitnami** — documented above; stale public images since 2024 paid tier split.
+- **Oracle Linux / UBI Oracle** — Oracle has a long history of hostile behavior
+  toward open source (Java, MySQL, OpenOffice, RHEL clone lawsuit). Keep Oracle
+  out of the stack on governance principle.
+- **Ubuntu in containers** — Canonical's snap push and telemetry decisions have
+  eroded trust. Debian slim is the same thing without the Canonical baggage.
+
+**On Chainguard specifically:** their images are rebuilt and re-signed daily.
+The `cgr.dev/chainguard/python` image is the right choice for the Enterprise
+FIPS-hardened tier — regulated customers in procurement conversations will ask
+"how do you handle base image CVEs?" and "how do you sign your images?" Chainguard
+answers both out of the box, and the sigstore signing chain is auditable.
+
+**On Alpine for Pro:** Alpine uses musl libc instead of glibc. Pure Python
+packages are fine. Compiled C extensions (e.g., `asyncpg`, `cryptography`) need
+testing — the `cryptography` wheel ships a bundled OpenSSL so it works, but
+verify any new compiled dependency against Alpine before adding it.

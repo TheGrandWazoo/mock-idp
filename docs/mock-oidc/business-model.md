@@ -61,8 +61,8 @@ Validate with a waitlist or 30-day free trial cohort first.
 - GitHub Actions marketplace action
 - Multi-provider claim shapes (Okta, Cognito, Keycloak, Entra ID)
 - Error/chaos injection admin API (hosted endpoint; test auth failure paths in CI)
-- Kong rate limiting + security on hosted endpoint
-- Cilium network policy hardening on hosted infrastructure
+- Cilium Gateway API — routing, per-org HTTPRoute rate limiting, L7 policy
+- Cilium network policy hardening (WireGuard node encryption, Hubble observability)
 - Priority support — email, 48h response SLA
 
 ### Enterprise — $150–300/month (annual contract, negotiated)
@@ -97,7 +97,7 @@ in Community, but scale and persistence are what you pay for.**
 | Multi-org | 1 org (default behavior) | Unlimited orgs, slug routing, push config via API |
 | Chaos injection | Full feature, self-hosted config only | Hosted endpoint chaos API (toggle remotely, no config change) |
 | Web admin UI | Read-only config/identity viewer | Full CRUD, org management, audit log browser |
-| Rate limiting | In-app (slowapi), configurable per instance | Kong per-org rate limiting on hosted endpoint |
+| Rate limiting | In-app (slowapi), configurable per instance | Gateway API HTTPRoute rate limiting per org slug (Cilium) |
 | Metrics | `/metrics` Prometheus endpoint (opt-in) | Grafana dashboard + alerting (hosted) |
 | Webhook delivery | Fire-and-forget (v0.5.2) | Retries + dead-letter queue + replay from UI |
 
@@ -256,13 +256,19 @@ network access, app registrations, and managed credentials.
   - Scale: add nodes as load grows, no re-architecture
   - Migration path to multi-region when revenue justifies it
 - **Postgres:** CloudNativePG operator — start single-node, promote to HA at ~50 paying orgs
-- **CNI: Cilium** — Layer 7-aware network policies; WireGuard node encryption;
-  Hubble network observability. Per-org network policy isolates slug traffic.
-  Cilium features gate at Pro (hosted infra hardening).
-- **API gateway: Kong** — rate limiting, request logging, circuit breaking in
-  front of the hosted endpoint. Per-org rate limit plans configured via Kong
-  Admin API at org provisioning time. Pro tier feature; OSS instances use
-  in-app rate limiting instead.
+- **CNI + Gateway: Cilium** — Cilium as the cluster CNI with its native
+  Gateway API implementation enabled. One control plane handles networking,
+  L7 network policy, and ingress routing. `GatewayClass` → `Gateway` →
+  per-org `HTTPRoute` for slug routing. Rate limiting via HTTPRoute filters
+  (Cilium-native, no separate API gateway process). WireGuard node encryption
+  and Hubble network observability included.
+- **Why not nginx / Kong at launch:** nginx Ingress is a legacy API
+  (Kubernetes Gateway API is the forward standard; nginx's governance
+  deteriorated after the F5 acquisition and the core developer fork in 2024).
+  Kong adds significant operational overhead and a second Postgres instance
+  before a single paying customer exists. Cilium Gateway API replaces both
+  cleanly. Kong remains relevant as a *target integration* (mock-idp issues
+  tokens that Kong validates) — not as our own infrastructure layer.
 
 ---
 
