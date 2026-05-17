@@ -3,4 +3,4 @@ name: mock-idp
 description: FastAPI mock identity provider emitting configurable OIDC-compliant JWTs for testing API gateway authentication
 type: application
 version: 0.1.0
-appVersion: "latest"
+appVersion: "0.5.6"
