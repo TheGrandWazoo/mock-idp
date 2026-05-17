@@ -15,7 +15,7 @@
 set -euo pipefail
 
 VERSION="${1:?VERSION argument required}"
-CURRENT_SHA_TAG="${2:-}"   # empty on release tag builds
+CURRENT_SHA_TAG="${2:-}"
 
 OWNER="${OWNER:-thegrandwazoo}"
 PACKAGE="${PACKAGE:-mock-idp}"
@@ -25,42 +25,46 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 echo "==> Cleaning up sha artifacts for v${VERSION} (current: ${CURRENT_SHA_TAG:-none})"
 
+# ── Write helper scripts (quoted heredoc — no shell expansion inside) ──────
+
+cat > "$TMPDIR/find_releases.py" << 'PYEOF'
+import json, sys
+releases_file, version, current = sys.argv[1], sys.argv[2], sys.argv[3]
+prefix = f"v{version}-sha-"
+for r in json.load(open(releases_file)):
+    tag = r["tagName"]
+    if r["isDraft"] and tag.startswith(prefix) and tag != (f"v{current}" if current else ""):
+        print(tag)
+PYEOF
+
+cat > "$TMPDIR/find_versions.py" << 'PYEOF'
+import json, sys
+versions_file, version, current = sys.argv[1], sys.argv[2], sys.argv[3]
+prefix = f"{version}-sha-"
+for v in json.load(open(versions_file)):
+    tags = v.get("metadata", {}).get("container", {}).get("tags", [])
+    if any(t.startswith(prefix) and t != current for t in tags):
+        print(v["id"], " ".join(tags))
+PYEOF
+
 # ── GitHub Draft Releases ──────────────────────────────────────────────────
 
 echo "--> Fetching draft releases..."
 gh release list --json tagName,isDraft --limit 100 > "$TMPDIR/releases.json"
 
-python3 "$TMPDIR/find_releases.py" << 'PYEOF'
-# written to a temp file and exec'd — avoids heredoc + variable embedding issues
-PYEOF
-
-cat > "$TMPDIR/find_releases.py" << PYEOF
-import json, sys
-
-data    = json.load(open("$TMPDIR/releases.json"))
-version = "${VERSION}"
-current = "${CURRENT_SHA_TAG}"
-prefix  = f"v{version}-sha-"
-
-for r in data:
-    tag = r["tagName"]
-    if r["isDraft"] and tag.startswith(prefix) and tag != f"v{current}":
-        print(tag)
-PYEOF
-
-STALE_RELEASES=$(python3 "$TMPDIR/find_releases.py")
+STALE_RELEASES=$(python3 "$TMPDIR/find_releases.py" \
+    "$TMPDIR/releases.json" "$VERSION" "$CURRENT_SHA_TAG")
 
 if [ -z "$STALE_RELEASES" ]; then
     echo "    no stale draft releases found"
 else
     while IFS= read -r tag; do
         echo "    deleting draft release: $tag"
-        # Delete the release first (no --cleanup-tag: the tag may already be gone)
-        gh release delete "$tag" --yes || echo "    warning: release delete failed for $tag, skipping"
-        # Try to delete the associated git tag; ignore 422 if it doesn't exist
+        gh release delete "$tag" --yes \
+            || echo "    warning: release delete failed for $tag, continuing"
         gh api -X DELETE "repos/${OWNER}/${PACKAGE}/git/refs/tags/${tag}" 2>/dev/null \
             && echo "    deleted git tag: $tag" \
-            || echo "    git tag $tag already absent, skipping"
+            || echo "    git tag $tag already absent"
     done <<< "$STALE_RELEASES"
 fi
 
@@ -70,21 +74,8 @@ echo "--> Fetching GHCR image versions..."
 gh api "/users/${OWNER}/packages/container/${PACKAGE}/versions?per_page=100" \
     > "$TMPDIR/versions.json"
 
-cat > "$TMPDIR/find_versions.py" << PYEOF
-import json, sys
-
-data    = json.load(open("$TMPDIR/versions.json"))
-version = "${VERSION}"
-current = "${CURRENT_SHA_TAG}"
-prefix  = f"{version}-sha-"
-
-for v in data:
-    tags = v.get("metadata", {}).get("container", {}).get("tags", [])
-    if any(t.startswith(prefix) and t != current for t in tags):
-        print(v["id"], " ".join(tags))
-PYEOF
-
-STALE_VERSIONS=$(python3 "$TMPDIR/find_versions.py")
+STALE_VERSIONS=$(python3 "$TMPDIR/find_versions.py" \
+    "$TMPDIR/versions.json" "$VERSION" "$CURRENT_SHA_TAG")
 
 if [ -z "$STALE_VERSIONS" ]; then
     echo "    no stale GHCR image versions found"
@@ -94,7 +85,7 @@ else
         tags="${line#* }"
         echo "    deleting GHCR image version $vid (tags: $tags)"
         gh api -X DELETE "/users/${OWNER}/packages/container/${PACKAGE}/versions/${vid}" \
-            || echo "    warning: GHCR delete failed for version $vid, skipping"
+            || echo "    warning: GHCR delete failed for version $vid, continuing"
     done <<< "$STALE_VERSIONS"
 fi
 
