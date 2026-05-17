@@ -12,50 +12,129 @@ keys) and the commit history.
 
 ## Status legend
 
-- 🟢 **v0.4 candidate** — meaningful next step; build when a real test demands it
+- 🟢 **Milestone** — committed to a version; tracked in GitHub milestone
 - 🟡 **Parked** — useful but no concrete demand yet; revisit when one shows up
 - 🔴 **Maybe-never** — build only if a concrete and well-scoped use case appears
 
 ---
 
-## v0.5 candidates
+## v0.6.0 — Hosted foundation
 
-Items are grouped by theme. Within each group, higher entries are higher
-priority based on effort-to-value ratio.
+GitHub Milestone #2. Lays the database schema and observability groundwork
+for the hosted Pro service. All items are community-visible.
 
-### Backend / persistence
+### 🟢 Token audit log + multi-org schema
 
-#### 🟡 Secret management (Vault)
+Every `/token` call written to a `token_events` table keyed by `org_id`.
+Queryable via `GET /admin/audit?limit=&cursor=`. Requires extending the
+Postgres schema with a multi-org layout (shared `tenants`, `users`,
+`service_principals` tables with `org_id` foreign key).
 
-Pull secrets from HashiCorp Vault at startup. Config references a path
-(`vault://secret/mock-idp/clients`). Requires `hvac` as an optional
-dependency.
+**Design constraint:** single-node Postgres today; schema must support
+CloudNativePG HA promotion at ~50 paying orgs without a migration.
 
-**When to revisit:** when a team using Vault wants to avoid duplicating
-secrets into a ConfigMap.
+### 🟢 Multi-provider claim shapes
+
+`provider: okta`, `provider: cognito`, `provider: keycloak` on a
+`TenantRecord`. Each provider module under `providers/` emits the
+claim shape that product expects. Enables teams switching IdPs to test
+both shapes from a single config.
+
+**Priority signal:** second-most-requested feature in OSS mock-OIDC
+community threads after hosted endpoint.
+
+### 🟢 Prometheus /metrics endpoint
+
+`GET /metrics` via `prometheus-fastapi-instrumentator`. Exposes request
+count, latency histogram, and active connections. Required for hosted
+service SLO monitoring (Linode LKE + Prometheus stack).
+
+**Scope note:** the "maybe-never" status on observability was for a test
+fixture. For a hosted SaaS, metrics are a hard operational requirement.
 
 ---
 
-### Protocol surface
+## v0.7.0 — Hosted endpoint (Pro)
+
+GitHub Milestone #3. Ships the first revenue-generating feature: the
+`mock.ksatechnologies.com/{org}/{issuer}/token` hosted endpoint.
+
+### 🟢 Hosted endpoint (slug routing)
+
+Slug-based issuer routing: `/{org}/{issuer}/token` maps to the org's
+Postgres-backed config. `iss` claim constructed from `ISS_BASE/{org}/{issuer}`.
+Org provisioning via admin API (create org, push config). JWKS URL stable
+across CI job isolation — solves the #1 CI pain point.
+
+### 🟢 GitHub Actions marketplace action
+
+`uses: thegrandwazoo/mock-idp-action@v1`. Spins up the hosted endpoint
+(or a container for self-hosted runners), outputs `MOCK_IDP_TOKEN_URL`
+and `MOCK_IDP_JWKS_URL` as step outputs. Free action is the highest-ROI
+growth lever — CI users are the natural Pro upsell.
+
+### 🟢 OBO flow (On-Behalf-Of, Entra-specific)
+
+`grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`. Entra-style
+OBO: service A presents its token, receives a token scoped for service B
+with the original user's identity threaded through (`scp`, `oid`, `tid`
+preserved; `act` chain added). No competitor handles this correctly.
+
+### 🟢 Error / chaos injection admin API
+
+`POST /admin/chaos` sets per-issuer fault modes: `{mode: "error_500",
+probability: 0.5}`, `{mode: "delay_ms", value: 2000}`,
+`{mode: "invalid_token"}`. Lets CI pipelines test auth failure paths
+without modifying config. Reset via `DELETE /admin/chaos/{issuer}`.
+
+### 🟢 Dev Container feature
+
+`.devcontainer/` with `devcontainer.json` that installs mock-idp and
+sets `CONFIG_PATH` + `ISS_BASE`. Publishable to the Dev Containers
+feature registry. Zero-setup onboarding for new contributors.
 
 ---
 
-### Token fidelity
+## v0.8.0 — Web admin UI
+
+GitHub Milestone #4. Depends on Postgres backend (v0.4.0) and multi-org
+schema (v0.6.0).
+
+### 🟢 Web admin UI
+
+React (or HTMX) dashboard: manage orgs, tenants, users, service principals,
+client apps. View audit log. Rotate JWKS. Trigger chaos modes. Auth via
+admin token or SSO (Enterprise). Required for the hosted Pro service
+self-service onboarding flow.
+
+### 🟢 PKCE / Authorization Code flow
+
+`GET /{issuer}/authorize` → redirect → code exchange at `/token`.
+PKCE (RFC 7636) required. Enables testing browser-based OIDC login flows
+end-to-end. Needed for teams writing E2E tests with Playwright/Cypress.
+
+### 🟢 Device Authorization Grant (RFC 8628)
+
+`POST /{issuer}/device_authorization` → `device_code` + `user_code` →
+polling `/token`. For teams testing CLI tools or IoT clients that use
+the device flow. Niche but high-signal: 3+ explicit requests in community
+threads.
 
 ---
 
-### Observability / testing
+## Pro / Enterprise (backlog)
 
----
+See [pro-enterprise.md](pro-enterprise.md) and
+[business-model.md](business-model.md) for strategy and tier breakdown.
+These items land in the private `mock-idp-enterprise` package.
 
-## Pro / Enterprise
-
-See [pro-enterprise.md](pro-enterprise.md) for the full strategy, tier
-breakdown, and build sequence. Highest-priority items:
-
-- **Hosted mock endpoint** — zero-setup SaaS; slug-based routing; first Pro feature
-- **Token audit log** — every `/token` call stored; queryable via UI + API
-- **Web admin UI** — depends on Postgres backend (v0.4.0 already shipped)
+- **mTLS / cert-bound tokens (RFC 8705)** — Enterprise; Large
+- **HSM signing key support (PKCS#11)** — Enterprise; Large
+- **FIPS 140-2 mode** — Enterprise; Large
+- **Terraform provider + Kubernetes CRD operator** — Enterprise; Large
+- **LDAP / Active Directory sync** — Enterprise; Medium
+- **SAML 2.0 SP federation** — Backlog; Large
+- **CloudNativePG HA Postgres** — Enterprise infra; Medium
 
 ---
 
@@ -177,13 +256,9 @@ Production-grade behavior: retry, then DLQ.
 Cute. But each one is a maintenance liability if the underlying surface
 changes. Build only if the onboarding pain is real.
 
-### 🔴 Browser-based admin UI for editing identities
+### ~~🔴 Browser-based admin UI for editing identities~~
 
-A web form for adding/editing users at runtime without editing YAML.
-
-**Why maybe-never:** YAML editing + hot-reload is now zero-friction. A
-UI doubles the surface area and adds an actual auth-and-authz problem to
-solve.
+Promoted to v0.8.0 milestone. Required for hosted Pro self-service onboarding.
 
 ### 🔴 Multi-tenant simulation with separate user pools per issuer
 
@@ -195,13 +270,9 @@ at any issuer) is fine for almost every test. If you need strict tenant
 isolation, run multiple mock pods with separate configs — that's both
 simpler and more realistic.
 
-### 🔴 Prometheus / OTel metrics
+### ~~🔴 Prometheus / OTel metrics~~
 
-`fastapi-instrumentator` makes this a one-import. Useful for production
-observability, less useful for a test fixture without a SLO.
-
-**Why maybe-never:** "scrape access logs" is sufficient. Don't over-build
-observability for a test tool.
+Promoted to v0.6.0 milestone. Required for hosted SaaS SLO monitoring.
 
 ### 🔴 Persistent revoked-tokens / persistent issued-tokens
 
@@ -215,6 +286,21 @@ makes this possible if the need ever becomes concrete.
 ---
 
 ## Resolved
+
+### CI/CD hardening (milestone #1, post-v0.5.6)
+
+- ✓ **Version-prefixed sha draft releases** — every push to main creates a
+  `<version>-sha-<hash>` GHCR image + GitHub Draft Release. Smoke test gates push.
+- ✓ **Cleanup script** — `.github/scripts/cleanup-sha-artifacts.sh` deletes stale
+  sha drafts and GHCR images when a new sha build or release tag succeeds.
+- ✓ **Branch protection** — `lint-test` + `build` required status checks on main;
+  `enforce_admins: false` for owner bypass.
+- ✓ **Helm lint + appVersion sync check** — CI enforces `chart/Chart.yaml appVersion`
+  matches `pyproject.toml` version (closes #37).
+- ✓ **Token exchange smoke test** — RFC 8693 grant type added to the CI smoke test
+  (closes #38).
+- ✓ **SHA-pinned actions** — all GitHub Actions pinned to commit SHAs; Dependabot
+  manages `github-actions` and `uv` ecosystems weekly (closes #39, #40).
 
 ### v0.5.6
 
