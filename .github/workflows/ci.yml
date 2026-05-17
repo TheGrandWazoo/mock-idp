@@ -12,6 +12,7 @@ on:
       - "Dockerfile"
       - "chart/**"
       - ".github/workflows/**"
+      - ".github/scripts/**"
   pull_request:
     paths:
       - "src/**"
@@ -21,6 +22,7 @@ on:
       - "Dockerfile"
       - "chart/**"
       - ".github/workflows/**"
+      - ".github/scripts/**"
 
 permissions:
   contents: read
