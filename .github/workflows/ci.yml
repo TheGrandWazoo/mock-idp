@@ -197,32 +197,16 @@ jobs:
 
           # Delete old draft releases for this version milestone (not the one just created)
           gh release list --json tagName,isDraft --limit 100 | \
-            python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-v, current = '$V', '$CURRENT_TAG'
-for r in data:
-    tag = r['tagName']
-    if r['isDraft'] and tag != current and tag.startswith(f'v{v}-sha-'):
-        print(tag)
-" | while IFS= read -r tag; do
+            python3 -c "import sys,json; [print(r['tagName']) for r in json.load(sys.stdin) if r['isDraft'] and r['tagName']!='${CURRENT_TAG}' and r['tagName'].startswith('v${V}-sha-')]" | \
+            while IFS= read -r tag; do
               echo "Removing old sha draft: $tag"
               gh release delete "$tag" --cleanup-tag --yes
             done
 
           # Delete old GHCR image versions for this version milestone
           gh api "/users/${{ env.OWNER }}/packages/container/${{ env.PACKAGE }}/versions?per_page=100" | \
-            python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-v, current = '$V', '$CURRENT_IMG'
-for ver in data:
-    tags = ver.get('metadata', {}).get('container', {}).get('tags', [])
-    for tag in tags:
-        if tag.startswith(f'{v}-sha-') and tag != current:
-            print(ver['id'])
-            break
-" | while IFS= read -r vid; do
+            python3 -c "import sys,json; [print(v['id']) for v in json.load(sys.stdin) if any(t.startswith('${V}-sha-') and t!='${CURRENT_IMG}' for t in v.get('metadata',{}).get('container',{}).get('tags',[]))]" | \
+            while IFS= read -r vid; do
               echo "Removing old GHCR image version: $vid"
               gh api -X DELETE "/users/${{ env.OWNER }}/packages/container/${{ env.PACKAGE }}/versions/${vid}"
             done
@@ -247,32 +231,16 @@ for ver in data:
 
           # Delete all sha draft releases for this milestone
           gh release list --json tagName,isDraft --limit 100 | \
-            python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-v = '$V'
-for r in data:
-    tag = r['tagName']
-    if r['isDraft'] and tag.startswith(f'v{v}-sha-'):
-        print(tag)
-" | while IFS= read -r tag; do
+            python3 -c "import sys,json; [print(r['tagName']) for r in json.load(sys.stdin) if r['isDraft'] and r['tagName'].startswith('v${V}-sha-')]" | \
+            while IFS= read -r tag; do
               echo "Removing sha draft: $tag"
               gh release delete "$tag" --cleanup-tag --yes
             done
 
           # Delete all GHCR sha image versions for this milestone
           gh api "/users/${{ env.OWNER }}/packages/container/${{ env.PACKAGE }}/versions?per_page=100" | \
-            python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-v = '$V'
-for ver in data:
-    tags = ver.get('metadata', {}).get('container', {}).get('tags', [])
-    for tag in tags:
-        if tag.startswith(f'{v}-sha-'):
-            print(ver['id'])
-            break
-" | while IFS= read -r vid; do
+            python3 -c "import sys,json; [print(v['id']) for v in json.load(sys.stdin) if any(t.startswith('${V}-sha-') for t in v.get('metadata',{}).get('container',{}).get('tags',[]))]" | \
+            while IFS= read -r vid; do
               echo "Removing sha GHCR image: $vid"
               gh api -X DELETE "/users/${{ env.OWNER }}/packages/container/${{ env.PACKAGE }}/versions/${vid}"
             done
