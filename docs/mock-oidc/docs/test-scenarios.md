@@ -1,6 +1,6 @@
 # Test Scenarios — Python Mock OIDC
 
-Concrete request/response patterns for the v0.5.5 surface area. Use these
+Concrete request/response patterns for the v0.5.6 surface area. Use these
 as the basis for a regression suite, ad-hoc curl tests, or gateway
 integration tests.
 

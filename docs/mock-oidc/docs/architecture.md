@@ -6,13 +6,13 @@
 |---|---|---|
 | HTTP framework | **FastAPI** | Async, type-hinted, path-parameter routing fits multi-issuer cleanly; OpenAPI / Swagger UI comes free at `/docs` |
 | ASGI server | **uvicorn** | Fast; hot-reload via `--reload` for the dev loop (file watching only — config changes still need a process restart) |
-| JWT / JOSE | **authlib** | Mature crypto, supports RS256/ES256/HS256, handles JWKS export |
+| JWT / JOSE | **joserfc** | RFC-focused JOSE library (JWS, JWK, JWT, JWA); RS256 and ES256; JWKS export |
 | Config format | **YAML** (pyyaml) | Human-readable identity store; mounted from a Kubernetes ConfigMap |
 | Container base | **python:3.14-slim** | ~50 MB base, no compiler toolchain |
 | Persistence | **none** | Signing keys generated on startup; identity store loaded once from YAML |
 
-Runtime dependencies: `fastapi`, `uvicorn[standard]`, `authlib`,
-`python-multipart`, `pyyaml`, `pydantic`.
+Runtime dependencies: `fastapi`, `uvicorn[standard]`, `joserfc`, `httpx`,
+`python-multipart`, `pyyaml`, `pydantic`, `watchfiles`.
 
 ---
 
@@ -431,9 +431,12 @@ roles>` with the token request, producing a token with exactly those
 roles. Checking none sends `X-Override-Roles:` (empty), which results in
 a token with no `roles` claim.
 
-The role list is derived from the identity's configuration: grants-table
-roles for the selected audience (if a `clients:` block exists for that
-audience), otherwise the identity's flat `roles` list.
+The role list shows **all roles defined on the client app** (`app.roles`),
+not just the identity's grants. Granted roles are pre-checked; non-granted
+roles are unchecked and dimmed — available for checking to test negative
+cases (e.g. checking `m2m` for alice to verify the gateway rejects it).
+When no client app exists for the audience, the identity's flat `roles`
+list is shown with all boxes pre-checked.
 
 ### `POST /debug/decode`
 
