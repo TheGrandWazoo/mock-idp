@@ -34,9 +34,9 @@ jobs:
   lint-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
         with:
           enable-cache: true
 
@@ -75,7 +75,7 @@ jobs:
       security-events: write
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       - name: Extract version
         id: ver
@@ -88,7 +88,7 @@ jobs:
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v4
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121  # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -97,7 +97,7 @@ jobs:
       - name: Extract image metadata (release tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf  # v6
         with:
           images: ${{ env.IMAGE }}
           tags: |
@@ -108,7 +108,7 @@ jobs:
             type=raw,value=latest,enable=${{ !contains(github.ref, '-') }}
 
       - name: Build image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f  # v7
         with:
           context: .
           load: true
@@ -147,12 +147,25 @@ jobs:
           [ -n "$TOKEN" ] \
             || { echo "ERROR: client_credentials grant returned no token"; docker logs mock-idp-smoke; exit 1; }
 
+          echo "Testing token_exchange grant (RFC 8693)..."
+          SUBJECT_TOKEN=$(curl -sf -X POST http://localhost:8080/smoke/token \
+            -d 'grant_type=password&username=alice&password=alice-pw&resource=api://serviceB' \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))")
+          TOKEN=$(curl -sf -X POST http://localhost:8080/smoke/token \
+            --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
+            --data-urlencode "subject_token=${SUBJECT_TOKEN}" \
+            --data-urlencode 'subject_token_type=urn:ietf:params:oauth:token-type:access_token' \
+            -d 'client_id=01010101-1010-1010-1010-aaaaaaaaaaaa&client_secret=serviceA-secret&audience=api://serviceB' \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))")
+          [ -n "$TOKEN" ] \
+            || { echo "ERROR: token_exchange grant returned no token"; docker logs mock-idp-smoke; exit 1; }
+
           echo "All smoke tests passed."
           docker stop mock-idp-smoke && docker rm mock-idp-smoke
 
       - name: Scan with Trivy (SARIF)
         if: github.event_name != 'pull_request'
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           image-ref: mock-idp:smoke
           format: sarif
@@ -163,13 +176,13 @@ jobs:
 
       - name: Upload Trivy results to GitHub Security
         if: github.event_name != 'pull_request' && always() && hashFiles('trivy-results.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@9e0d7b8d25671d64c341c19c0152d693099fb5ba  # v4
         with:
           sarif_file: trivy-results.sarif
 
       - name: Fail on HIGH/CRITICAL vulnerabilities
         if: github.event_name != 'pull_request'
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
           image-ref: mock-idp:smoke
           format: table
