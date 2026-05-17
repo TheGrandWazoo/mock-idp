@@ -49,6 +49,8 @@ Validate with a waitlist or 30-day free trial cohort first.
 - Full OIDC feature set: all grant types, JWKS, token exchange (RFC 8693),
   realm roles, webhooks, playground
 - YAML config store
+- In-app rate limiting (self-protection for self-hosted instances)
+- Chaos / error injection (self-hosted only — full feature, no hosted API)
 
 ### Pro — $29–49/month per org
 - Hosted endpoint: `mock.ksatechnologies.com/{org}/{issuer}/token`
@@ -58,13 +60,16 @@ Validate with a waitlist or 30-day free trial cohort first.
 - Web admin UI for identity and org management
 - GitHub Actions marketplace action
 - Multi-provider claim shapes (Okta, Cognito, Keycloak, Entra ID)
-- Error/chaos injection admin API (test auth failure paths in CI)
+- Error/chaos injection admin API (hosted endpoint; test auth failure paths in CI)
+- Kong rate limiting + security on hosted endpoint
+- Cilium network policy hardening on hosted infrastructure
 - Priority support — email, 48h response SLA
 
 ### Enterprise — $150–300/month (annual contract, negotiated)
 - Everything in Pro, self-hosted on customer infrastructure
+- **lightweight-idp** — production-grade positioning (see below)
 - CloudNativePG for HA Postgres
-- HashiCorp Vault / AWS Secrets Manager / Azure Key Vault integration
+- HashiCorp Vault / AWS Secrets Manager / Azure Key Vault sidecar integration
 - LDAP / Active Directory user sync
 - SAML 2.0 SP federation
 - mTLS / certificate-bound tokens (RFC 8705)
@@ -72,10 +77,72 @@ Validate with a waitlist or 30-day free trial cohort first.
 - Device Authorization Grant (RFC 8628)
 - HSM signing key support (PKCS#11)
 - FIPS 140-2 mode
+- CIS Level 2 hardened container image
 - Terraform provider + Kubernetes CRD operator
 - SSO for admin UI
 - SLA (99.9% uptime; 4h support response for self-hosted)
 - Dedicated Slack channel
+
+---
+
+## À la carte / Freemium Hooks
+
+The goal is to let Community users *taste* Pro/Enterprise features so the
+upgrade conversation is pull, not push. The design rule: **the feature works
+in Community, but scale and persistence are what you pay for.**
+
+| Feature | Community (OSS) | Pro trigger |
+|---|---|---|
+| Token audit log | Last 100 events, in-memory — gone on restart | Persistent, queryable, 90-day retention |
+| Multi-org | 1 org (default behavior) | Unlimited orgs, slug routing, push config via API |
+| Chaos injection | Full feature, self-hosted config only | Hosted endpoint chaos API (toggle remotely, no config change) |
+| Web admin UI | Read-only config/identity viewer | Full CRUD, org management, audit log browser |
+| Rate limiting | In-app (slowapi), configurable per instance | Kong per-org rate limiting on hosted endpoint |
+| Metrics | `/metrics` Prometheus endpoint (opt-in) | Grafana dashboard + alerting (hosted) |
+| Webhook delivery | Fire-and-forget (v0.5.2) | Retries + dead-letter queue + replay from UI |
+
+The community user hits the limit naturally as they scale — they never feel
+artificially blocked. When they ask "can I keep the audit log across restarts?"
+or "can I push config without touching YAML?" the Pro answer is already obvious.
+
+---
+
+## Product Evolution — mock-idp → lightweight-idp
+
+**mock-idp** is the on-ramp: a developer testing tool, MIT licensed, free,
+zero friction. It gets teams in the door.
+
+**lightweight-idp** is the upgrade destination: a production-grade, lightweight
+OIDC identity plane for environments that need real tokens but cannot or should
+not depend on a live Entra ID / Okta / Cognito tenant.
+
+The upgrade trigger is organic — the customer tells you they have outgrown the
+mock. Common triggers:
+
+- "We started using it for CI. Now our staging cluster is air-gapped and we
+  want it running there permanently with LDAP sync and HA."
+- "Our DR plan assumes Entra ID might be unavailable. Can this issue tokens
+  for internal services during an outage?"
+- "Our edge cluster has no internet access. We need a local OIDC plane."
+- "Legal flagged our CI pipeline making outbound calls to our Entra ID tenant
+  for every test run."
+
+**What changes when you go lightweight:**
+
+| Concern | mock-idp (testing) | lightweight-idp (production supplement) |
+|---|---|---|
+| Uptime expectation | Best-effort | SLA (99.9%, 4h response) |
+| Secret storage | Env vars / files | Vault sidecar, AWS/Azure KMS |
+| Image hardening | Trivy-scanned | CIS Level 2 benchmarked |
+| Crypto compliance | Standard | FIPS 140-2 mode |
+| Identity source | YAML / Postgres | LDAP / AD sync |
+| Key storage | In-cluster | HSM (PKCS#11) |
+| Audit | In-memory log | SIEM export (Splunk, Datadog, Elastic) |
+
+**Naming note:** "mock-idp" actively works against the supplement positioning.
+A future brand split — keeping `mock-idp` as the OSS tool and launching
+`lightweight-idp` as a separate product — is worth evaluating before the
+hosted endpoint launch. Not urgent; revisit at the $5k/month milestone.
 
 ---
 
@@ -189,6 +256,13 @@ network access, app registrations, and managed credentials.
   - Scale: add nodes as load grows, no re-architecture
   - Migration path to multi-region when revenue justifies it
 - **Postgres:** CloudNativePG operator — start single-node, promote to HA at ~50 paying orgs
+- **CNI: Cilium** — Layer 7-aware network policies; WireGuard node encryption;
+  Hubble network observability. Per-org network policy isolates slug traffic.
+  Cilium features gate at Pro (hosted infra hardening).
+- **API gateway: Kong** — rate limiting, request logging, circuit breaking in
+  front of the hosted endpoint. Per-org rate limit plans configured via Kong
+  Admin API at org provisioning time. Pro tier feature; OSS instances use
+  in-app rate limiting instead.
 
 ---
 
