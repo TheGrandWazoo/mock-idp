@@ -1506,7 +1506,7 @@ def test_audit_write_does_not_break_token_issuance(client):
 
 def test_audit_write_called_on_password_grant(client):
     """write_token_event is awaited on every successful password grant."""
-    from unittest.mock import AsyncMock, call, patch
+    from unittest.mock import AsyncMock, patch
 
     import mock_idp.config as m
 
@@ -1577,7 +1577,7 @@ def test_audit_write_called_on_token_exchange(client):
 def test_audit_multi_org_isolation():
     """Stores with different org_ids cannot read each other's data."""
     import asyncio
-    from unittest.mock import AsyncMock, MagicMock, patch
+    from unittest.mock import AsyncMock
 
     async def run():
         from mock_idp.store.yaml_store import YamlIdentityStore

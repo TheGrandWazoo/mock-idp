@@ -5,10 +5,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .. import config as _cfg
-
-_log = logging.getLogger(__name__)
 from ..keys import get_alt_key_for_alg, get_jwks_keys, get_signing_key_for_alg, get_signing_public_key_pem
-from ..webhooks import fire_webhooks
 from ..providers import get_provider
 from ..tokens import (
     apply_overrides,
@@ -26,6 +23,9 @@ from ..tokens import (
     sign,
     verify_token,
 )
+from ..webhooks import fire_webhooks
+
+_log = logging.getLogger(__name__)
 
 router = APIRouter()
 
