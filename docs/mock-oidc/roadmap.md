@@ -81,7 +81,7 @@ S100–S102 added.
 ## v0.7.0 — Hosted endpoint (Pro)
 
 GitHub Milestone #3. Ships the first revenue-generating feature: the
-`mock.ksatechnologies.com/{org}/{issuer}/token` hosted endpoint.
+`mock.ksatechnologies.dev/{org}/{issuer}/token` hosted endpoint.
 
 ### 🟢 Hosted endpoint (slug routing)
 

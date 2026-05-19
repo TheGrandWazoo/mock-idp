@@ -204,7 +204,7 @@ password and secret fields as `"***"` regardless of how they were loaded.
 
 | Field | Purpose |
 |---|---|
-| `provider` | Claim-shape provider. Currently only `entra_id` (default). |
+| `provider` | Claim-shape provider. One of `entra_id` (default), `okta`, `cognito`, `keycloak`. |
 | `realm_roles` | Roles applied to **every** identity in this tenant for every token. Merged before per-identity `realm_roles` and per-audience grants. |
 | `users` | Map of username → `UserRecord`. |
 | `service_principals` | Map of key → `ServicePrincipalRecord`. |
