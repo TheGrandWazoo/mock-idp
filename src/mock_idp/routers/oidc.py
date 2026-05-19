@@ -19,7 +19,6 @@ from ..tokens import (
     resolve_expiry,
     resolve_roles,
     resolve_shape,
-    resolve_user_aud,
     sign,
     verify_token,
 )
@@ -73,7 +72,6 @@ async def token(issuer: str, request: Request):
     await apply_test_hooks(headers)
     grant_type = form.get("grant_type")
     aud = resolve_aud(form)
-    provider = get_provider("entra_id")
     effective_mode = _cfg.ISSUER_MODES.get(issuer) or _cfg.MODE
 
     signing_alg = "RS256"
@@ -87,8 +85,8 @@ async def token(issuer: str, request: Request):
         shape = resolve_shape(user.token_version, form, headers.get("x-token-shape"))
         expires_in = resolve_expiry(user.token_lifetime_seconds, headers)
         roles = apply_roles_override(resolve_roles(user_key, user, aud), headers)
-        token_aud = resolve_user_aud(aud)  # UUID for user tokens; URI unchanged for SPs
-        claims = provider.user_claims(issuer, user, token_aud, shape, expires_in, roles, form.get("client_id"))
+        provider = get_provider(user._provider)
+        claims = provider.user_claims(issuer, user, aud, shape, expires_in, roles, form.get("client_id"))
         signing_alg = user.signing_alg
 
     elif grant_type == "client_credentials":
@@ -100,6 +98,7 @@ async def token(issuer: str, request: Request):
         shape = resolve_shape(sp.token_version, form, headers.get("x-token-shape"))
         expires_in = resolve_expiry(sp.token_lifetime_seconds, headers)
         roles = apply_roles_override(resolve_roles(sp_key, sp, aud), headers)
+        provider = get_provider(sp._provider)
         claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, expires_in, roles)
         if sp.override_any_claim:
             apply_overrides(claims, form, allow_iss=sp.override_iss_too)
@@ -137,6 +136,7 @@ async def token(issuer: str, request: Request):
         shape = resolve_shape(sp.token_version, form, headers.get("x-token-shape"))
         expires_in = resolve_expiry(sp.token_lifetime_seconds, headers)
         roles = apply_roles_override(resolve_roles(sp_key, sp, aud), headers)
+        provider = get_provider(sp._provider)
 
         # Base claims for the intermediary SP (handles ver, azp/appid, iss, exp, …)
         claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, expires_in, roles)
@@ -195,7 +195,6 @@ async def token_wrong_sig(issuer: str, request: Request):
     form = dict(await request.form())
     headers = {k.lower(): v for k, v in request.headers.items()}
     aud = resolve_aud(form)
-    provider = get_provider("entra_id")
     effective_mode = _cfg.ISSUER_MODES.get(issuer) or _cfg.MODE
     signing_alg = "RS256"
 
@@ -207,6 +206,7 @@ async def token_wrong_sig(issuer: str, request: Request):
         check_audience(user_key, user, aud, mode=effective_mode)
         shape = resolve_shape(user.token_version, form, headers.get("x-token-shape"))
         roles = resolve_roles(user_key, user, aud)
+        provider = get_provider(user._provider)
         claims = provider.user_claims(issuer, user, aud, shape, 3600, roles, form.get("client_id"))
         signing_alg = user.signing_alg
     else:
@@ -217,6 +217,7 @@ async def token_wrong_sig(issuer: str, request: Request):
         check_audience(sp_key, sp, aud, mode=effective_mode)
         shape = resolve_shape(sp.token_version, form, headers.get("x-token-shape"))
         roles = resolve_roles(sp_key, sp, aud)
+        provider = get_provider(sp._provider)
         claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, 3600, roles)
         signing_alg = sp.signing_alg
 
@@ -233,7 +234,6 @@ async def token_unsigned(issuer: str, request: Request):
     form = dict(await request.form())
     headers = {k.lower(): v for k, v in request.headers.items()}
     aud = resolve_aud(form)
-    provider = get_provider("entra_id")
     effective_mode = _cfg.ISSUER_MODES.get(issuer) or _cfg.MODE
 
     if form.get("grant_type") == "password":
@@ -244,6 +244,7 @@ async def token_unsigned(issuer: str, request: Request):
         check_audience(user_key, user, aud, mode=effective_mode)
         shape = resolve_shape(user.token_version, form, headers.get("x-token-shape"))
         roles = resolve_roles(user_key, user, aud)
+        provider = get_provider(user._provider)
         claims = provider.user_claims(issuer, user, aud, shape, 3600, roles, form.get("client_id"))
     else:
         sp_key = form.get("client_id") or ""
@@ -253,6 +254,7 @@ async def token_unsigned(issuer: str, request: Request):
         check_audience(sp_key, sp, aud, mode=effective_mode)
         shape = resolve_shape(sp.token_version, form, headers.get("x-token-shape"))
         roles = resolve_roles(sp_key, sp, aud)
+        provider = get_provider(sp._provider)
         claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, 3600, roles)
 
     return {
@@ -268,7 +270,6 @@ async def token_wrong_alg(issuer: str, request: Request):
     form = dict(await request.form())
     headers = {k.lower(): v for k, v in request.headers.items()}
     aud = resolve_aud(form)
-    provider = get_provider("entra_id")
     effective_mode = _cfg.ISSUER_MODES.get(issuer) or _cfg.MODE
 
     if form.get("grant_type") == "password":
@@ -279,6 +280,7 @@ async def token_wrong_alg(issuer: str, request: Request):
         check_audience(user_key, user, aud, mode=effective_mode)
         shape = resolve_shape(user.token_version, form, headers.get("x-token-shape"))
         roles = resolve_roles(user_key, user, aud)
+        provider = get_provider(user._provider)
         claims = provider.user_claims(issuer, user, aud, shape, 3600, roles, form.get("client_id"))
     else:
         sp_key = form.get("client_id") or ""
@@ -288,6 +290,7 @@ async def token_wrong_alg(issuer: str, request: Request):
         check_audience(sp_key, sp, aud, mode=effective_mode)
         shape = resolve_shape(sp.token_version, form, headers.get("x-token-shape"))
         roles = resolve_roles(sp_key, sp, aud)
+        provider = get_provider(sp._provider)
         claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, 3600, roles)
 
     return {

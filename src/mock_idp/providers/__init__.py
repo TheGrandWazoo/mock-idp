@@ -5,6 +5,9 @@ from types import ModuleType
 
 _REGISTRY: dict[str, str] = {
     "entra_id": ".entra_id",
+    "okta": ".okta",
+    "cognito": ".cognito",
+    "keycloak": ".keycloak",
 }
 
 

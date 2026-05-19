@@ -303,12 +303,14 @@ class YamlIdentityStore:
             for username, user in tenant.users.items():
                 user.tid = tid
                 user._tenant_realm_roles = tenant_realm_roles
+                user._provider = tenant.provider
                 new_users[username] = user
 
             for key, sp in tenant.service_principals.items():
                 sp.tid = tid
                 sp._name = key
                 sp._tenant_realm_roles = tenant_realm_roles
+                sp._provider = tenant.provider
                 canonical = sp.client_id or key
                 sp._canonical_id = canonical
                 new_sps[key] = sp

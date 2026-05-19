@@ -36,7 +36,7 @@ CloudNativePG HA promotion at ~50 paying orgs without a migration.
 Shipped in issue #44. Alembic migration 0002 adds `org_id` to all tables
 and creates `token_events`. `MOCK_IDP_ORG_ID` env var sets tenant scope.
 
-### 🟢 Multi-provider claim shapes
+### ✅ Multi-provider claim shapes — Resolved
 
 `provider: okta`, `provider: cognito`, `provider: keycloak` on a
 `TenantRecord`. Each provider module under `providers/` emits the
@@ -45,6 +45,10 @@ both shapes from a single config.
 
 **Priority signal:** second-most-requested feature in OSS mock-OIDC
 community threads after hosted endpoint.
+
+Shipped in issue #45. Provider is per-tenant via `_provider` PrivateAttr
+injected at load time. config.example.yaml updated with sample tenants for
+each provider. Test scenarios S90–S97 added.
 
 ### 🟢 Prometheus /metrics endpoint
 

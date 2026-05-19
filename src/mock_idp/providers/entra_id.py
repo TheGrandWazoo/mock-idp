@@ -5,6 +5,7 @@ from typing import Optional
 
 from .. import config as _cfg
 from ..models import ServicePrincipalRecord, UserRecord
+from ..tokens import resolve_user_aud
 
 
 def _common(issuer: str, aud: str, expires_in: int) -> dict:
@@ -27,7 +28,7 @@ def user_claims(
     roles: list[str],
     oauth_client_id: Optional[str],
 ) -> dict:
-    c = _common(issuer, aud, expires_in)
+    c = _common(issuer, resolve_user_aud(aud), expires_in)
     c["sub"] = user.oid
     c["oid"] = user.oid
     c["tid"] = user.tid

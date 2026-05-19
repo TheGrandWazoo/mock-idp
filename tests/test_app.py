@@ -1601,6 +1601,151 @@ def test_audit_multi_org_isolation():
     asyncio.run(run())
 
 
+# ── Multi-provider claim shapes ────────────────────────────────────────────
+
+
+def test_okta_user_token_claim_shape(client):
+    """Okta provider: sub=email, uid=oid, cid, scp string, no tid/ver."""
+    r = client.post(
+        "/okta-tenant/token",
+        data={
+            "grant_type": "password",
+            "username": "carol",
+            "password": "carol-pw",
+            "resource": "api://okta-api",
+            "client_id": "okta-client-id",
+        },
+    )
+    assert r.status_code == 200
+    payload = _decode_payload(r.json()["access_token"])
+    assert payload["sub"] == "carol@example.com"
+    assert payload["uid"] == "33333333-3333-3333-3333-aaaaaaaaaaaa"
+    assert payload["cid"] == "okta-client-id"
+    assert isinstance(payload["scp"], str)
+    assert "groups" in payload
+    assert "tid" not in payload
+    assert "ver" not in payload
+
+
+def test_okta_sp_token_claim_shape(client):
+    """Okta provider: SP token has sub=client_id, cid, scp string."""
+    r = client.post(
+        "/okta-tenant/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": "okta-client-id",
+            "client_secret": "okta-service-secret",
+            "resource": "api://okta-api",
+        },
+    )
+    assert r.status_code == 200
+    payload = _decode_payload(r.json()["access_token"])
+    assert payload["sub"] == "okta-client-id"
+    assert payload["cid"] == "okta-client-id"
+    assert isinstance(payload["scp"], str)
+    assert "tid" not in payload
+    assert "ver" not in payload
+
+
+def test_cognito_user_token_claim_shape(client):
+    """Cognito provider: token_use=access, cognito:username, cognito:groups, scope string."""
+    r = client.post(
+        "/cognito-tenant/token",
+        data={
+            "grant_type": "password",
+            "username": "dave",
+            "password": "dave-pw",
+            "resource": "api://cognito-api",
+            "client_id": "cognito-client-id",
+        },
+    )
+    assert r.status_code == 200
+    payload = _decode_payload(r.json()["access_token"])
+    assert payload["token_use"] == "access"
+    assert payload["cognito:username"] == "dave"
+    assert isinstance(payload["cognito:groups"], list)
+    assert isinstance(payload["scope"], str)
+    assert payload["client_id"] == "cognito-client-id"
+    assert "tid" not in payload
+    assert "ver" not in payload
+
+
+def test_cognito_sp_token_claim_shape(client):
+    """Cognito provider: SP token has token_use=access, client_id, scope string."""
+    r = client.post(
+        "/cognito-tenant/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": "cognito-client-id",
+            "client_secret": "cognito-service-secret",
+            "resource": "api://cognito-api",
+        },
+    )
+    assert r.status_code == 200
+    payload = _decode_payload(r.json()["access_token"])
+    assert payload["token_use"] == "access"
+    assert payload["client_id"] == "cognito-client-id"
+    assert isinstance(payload["scope"], str)
+    assert "tid" not in payload
+
+
+def test_keycloak_user_token_claim_shape(client):
+    """Keycloak provider: realm_access.roles, resource_access, preferred_username, email, azp."""
+    r = client.post(
+        "/keycloak-tenant/token",
+        data={
+            "grant_type": "password",
+            "username": "eve",
+            "password": "eve-pw",
+            "resource": "api://keycloak-api",
+            "client_id": "keycloak-client-id",
+        },
+    )
+    assert r.status_code == 200
+    payload = _decode_payload(r.json()["access_token"])
+    assert payload["preferred_username"] == "eve"
+    assert payload["email"] == "eve@example.com"
+    assert "roles" in payload["realm_access"]
+    assert isinstance(payload["realm_access"]["roles"], list)
+    assert payload["azp"] == "keycloak-client-id"
+    assert "keycloak-client-id" in payload["resource_access"]
+    assert "tid" not in payload
+    assert "ver" not in payload
+
+
+def test_keycloak_sp_token_claim_shape(client):
+    """Keycloak provider: SP token has realm_access.roles, resource_access, azp."""
+    r = client.post(
+        "/keycloak-tenant/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": "keycloak-client-id",
+            "client_secret": "keycloak-service-secret",
+            "resource": "api://keycloak-api",
+        },
+    )
+    assert r.status_code == 200
+    payload = _decode_payload(r.json()["access_token"])
+    assert payload["azp"] == "keycloak-client-id"
+    assert "roles" in payload["realm_access"]
+    assert "keycloak-client-id" in payload["resource_access"]
+    assert "tid" not in payload
+
+
+def test_provider_isolation_entra_id_unaffected(client):
+    """Entra ID tenant still produces oid, tid, ver — unaffected by new providers."""
+    r = client.post(
+        "/default/token",
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw",
+              "resource": "api://serviceB"},
+    )
+    assert r.status_code == 200
+    payload = _decode_payload(r.json()["access_token"])
+    assert "oid" in payload
+    assert "tid" in payload
+    assert "ver" in payload
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 

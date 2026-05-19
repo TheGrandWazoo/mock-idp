@@ -214,10 +214,20 @@ class PostgresIdentityStore:
                 "SELECT * FROM app_config WHERE org_id = $1", self._org_id
             )
             user_rows = await conn.fetch(
-                "SELECT * FROM users WHERE org_id = $1", self._org_id
+                """
+                SELECT u.*, t.provider
+                FROM users u JOIN tenants t USING (org_id, tid)
+                WHERE u.org_id = $1
+                """,
+                self._org_id,
             )
             sp_rows = await conn.fetch(
-                "SELECT * FROM service_principals WHERE org_id = $1", self._org_id
+                """
+                SELECT s.*, t.provider
+                FROM service_principals s JOIN tenants t USING (org_id, tid)
+                WHERE s.org_id = $1
+                """,
+                self._org_id,
             )
             app_rows = await conn.fetch(
                 "SELECT * FROM client_apps WHERE org_id = $1", self._org_id
@@ -254,6 +264,7 @@ class PostgresIdentityStore:
                 allowed_audiences=list(row["allowed_audiences"] or []),
                 extra_claims=extra,
             )
+            user._provider = row["provider"]
             new_users[row["username"]] = user
 
         # Service principals
@@ -277,6 +288,7 @@ class PostgresIdentityStore:
             )
             name = row["name"]
             sp._name = name
+            sp._provider = row["provider"]
             canonical = sp.client_id or name
             sp._canonical_id = canonical
             new_sps[name] = sp

@@ -14,6 +14,7 @@ class UserRecord(BaseModel):
     signing_alg: str = "RS256"
     realm_roles: list[str] = []  # always in token, any audience (identity-level)
     _tenant_realm_roles: list[str] = PrivateAttr(default_factory=list)  # injected from tenant
+    _provider: str = PrivateAttr(default="entra_id")  # injected from tenant
     roles: list[str] = []  # fallback when no client-app grants are configured
     groups: list[str] = []
     allowed_audiences: list[str] = []
@@ -52,6 +53,7 @@ class ServicePrincipalRecord(BaseModel):
     signing_alg: str = "RS256"
     realm_roles: list[str] = []  # always in token, any audience (identity-level)
     _tenant_realm_roles: list[str] = PrivateAttr(default_factory=list)  # injected from tenant
+    _provider: str = PrivateAttr(default="entra_id")  # injected from tenant
     roles: list[str] = []  # fallback when no client-app grants are configured
     groups: list[str] = []
     tid: str = ""  # injected from tenant key at load time

@@ -116,3 +116,90 @@ tenants:
         grants:
           alice: [reader]
           service-b: [m2m]
+
+  # ── Okta-shaped tenant ────────────────────────────────────────────────────
+  # Tokens use Okta claim shape: sub=email, uid=oid UUID, cid=client_id,
+  # scp=space-delimited string, groups array. No tid/ver/oid claim.
+  okta-tenant:
+    provider: okta
+    users:
+      carol:
+        password: carol-pw
+        upn: carol@example.com
+        preferred_username: carol@example.com
+        oid: 33333333-3333-3333-3333-aaaaaaaaaaaa
+        token_lifetime_seconds: 3600
+        groups: [okta-users]
+        allowed_audiences: [api://okta-api]
+
+    service_principals:
+      okta-service:
+        client_id: okta-client-id
+        secret: okta-service-secret
+        allowed_audiences: [api://okta-api]
+
+    clients:
+      api://okta-api:
+        label: Okta API
+        roles: [read, write]
+        grants:
+          carol: [read]
+          okta-service: [read, write]
+
+  # ── Cognito-shaped tenant ─────────────────────────────────────────────────
+  # Tokens use AWS Cognito access token shape: token_use=access,
+  # cognito:username, cognito:groups, scope=space-delimited, client_id.
+  cognito-tenant:
+    provider: cognito
+    users:
+      dave:
+        password: dave-pw
+        upn: dave@example.com
+        preferred_username: dave
+        oid: 44444444-4444-4444-4444-aaaaaaaaaaaa
+        token_lifetime_seconds: 3600
+        groups: [cognito-users]
+        allowed_audiences: [api://cognito-api]
+
+    service_principals:
+      cognito-service:
+        client_id: cognito-client-id
+        secret: cognito-service-secret
+        allowed_audiences: [api://cognito-api]
+
+    clients:
+      api://cognito-api:
+        label: Cognito API
+        roles: [read, write]
+        grants:
+          dave: [read]
+          cognito-service: [read, write]
+
+  # ── Keycloak-shaped tenant ────────────────────────────────────────────────
+  # Tokens use Keycloak shape: realm_access.roles, resource_access.<client>.roles,
+  # preferred_username, email, azp. No tid/ver/oid claim.
+  keycloak-tenant:
+    provider: keycloak
+    users:
+      eve:
+        password: eve-pw
+        upn: eve@example.com
+        preferred_username: eve
+        oid: 55555555-5555-5555-5555-aaaaaaaaaaaa
+        token_lifetime_seconds: 3600
+        groups: [keycloak-users]
+        allowed_audiences: [api://keycloak-api]
+
+    service_principals:
+      keycloak-service:
+        client_id: keycloak-client-id
+        secret: keycloak-service-secret
+        allowed_audiences: [api://keycloak-api]
+
+    clients:
+      api://keycloak-api:
+        label: Keycloak API
+        roles: [read, write]
+        grants:
+          eve: [read]
+          keycloak-service: [read, write]

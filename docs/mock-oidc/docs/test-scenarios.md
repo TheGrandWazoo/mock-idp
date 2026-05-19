@@ -1554,6 +1554,150 @@ curl -s -H "x-admin-token: change-me-in-real-deployments" \
 
 ---
 
+## S90–S99 Multi-provider claim shapes (v0.6.0+)
+
+Set `provider:` on a tenant to control which claim shape is emitted.
+Supported values: `entra_id` (default), `okta`, `cognito`, `keycloak`.
+
+### S90 — Okta user token
+
+```yaml
+# config.yaml
+tenants:
+  okta-tenant:
+    provider: okta
+    users:
+      carol:
+        password: carol-pw
+        upn: carol@example.com
+        oid: 33333333-3333-3333-3333-aaaaaaaaaaaa
+        allowed_audiences: [api://okta-api]
+    clients:
+      api://okta-api:
+        roles: [read]
+        grants:
+          carol: [read]
+```
+
+```bash
+curl -s -X POST http://localhost:8080/okta-tenant/token \
+  -d 'grant_type=password&username=carol&password=carol-pw&resource=api://okta-api&client_id=my-app'
+```
+
+Expected payload:
+- `sub` = `carol@example.com` (upn, not UUID)
+- `uid` = `33333333-…` (the oid UUID)
+- `cid` = `my-app`
+- `scp` = space-delimited string (e.g. `"read"`)
+- No `tid`, no `ver`, no `oid` claim
+
+### S91 — Okta SP token
+
+```bash
+curl -s -X POST http://localhost:8080/okta-tenant/token \
+  -d 'grant_type=client_credentials&client_id=okta-client-id&client_secret=okta-service-secret&resource=api://okta-api'
+```
+
+Expected: `sub=okta-client-id`, `cid=okta-client-id`, `scp` string, no `tid`.
+
+### S92 — Cognito user token
+
+```yaml
+tenants:
+  cognito-tenant:
+    provider: cognito
+    users:
+      dave:
+        password: dave-pw
+        upn: dave@example.com
+        preferred_username: dave
+        oid: 44444444-…
+        allowed_audiences: [api://cognito-api]
+    clients:
+      api://cognito-api:
+        roles: [read]
+        grants:
+          dave: [read]
+```
+
+```bash
+curl -s -X POST http://localhost:8080/cognito-tenant/token \
+  -d 'grant_type=password&username=dave&password=dave-pw&resource=api://cognito-api&client_id=cognito-client-id'
+```
+
+Expected:
+- `token_use` = `"access"`
+- `cognito:username` = `"dave"`
+- `cognito:groups` = array
+- `scope` = space-delimited string
+- `client_id` = `"cognito-client-id"`
+
+### S93 — Cognito SP token
+
+Expected: `token_use=access`, `client_id`, `scope` string. No `tid`.
+
+### S94 — Keycloak user token
+
+```yaml
+tenants:
+  keycloak-tenant:
+    provider: keycloak
+    users:
+      eve:
+        password: eve-pw
+        upn: eve@example.com
+        preferred_username: eve
+        oid: 55555555-…
+        allowed_audiences: [api://keycloak-api]
+    clients:
+      api://keycloak-api:
+        roles: [read]
+        grants:
+          eve: [read]
+```
+
+```bash
+curl -s -X POST http://localhost:8080/keycloak-tenant/token \
+  -d 'grant_type=password&username=eve&password=eve-pw&resource=api://keycloak-api&client_id=keycloak-client-id'
+```
+
+Expected:
+- `preferred_username` = `"eve"`
+- `email` = `"eve@example.com"`
+- `realm_access.roles` = array of roles
+- `resource_access.keycloak-client-id.roles` = same array
+- `azp` = `"keycloak-client-id"`
+- No `tid`, no `ver`, no `oid` claim
+
+### S95 — Keycloak SP token
+
+Expected: `azp=client_id`, `realm_access.roles`, `resource_access.<client>.roles`. No `tid`.
+
+### S96 — Entra ID tenant unaffected by new providers
+
+Existing `entra_id` tenants continue to produce `oid`, `tid`, `ver`. No behavioral change.
+
+### S97 — Unknown provider rejected at config load time
+
+```yaml
+tenants:
+  bad-tenant:
+    provider: salesforce   # not registered
+```
+
+Server startup raises `ValueError: Unknown provider 'salesforce'` when the
+first token is requested for that tenant. Existing tenants continue to work.
+
+**Troubleshooting:**
+
+- Wrong claim shape → check `provider:` on the tenant, not the identity.
+  Provider is per-tenant, not per-user.
+- `scp` claim missing for Okta → identity has no roles and no grants for
+  the requested audience. Add a `grants:` entry under `clients:`.
+- `realm_access` missing for Keycloak → same — no roles resolved. Check grants.
+
+---
+
 ## Coverage summary
 
 | Area | Scenarios |
@@ -1586,5 +1730,6 @@ curl -s -H "x-admin-token: change-me-in-real-deployments" \
 | Secret references (from_env / from_file) | S79–S81 |
 | Realm roles | S82–S84 |
 | Token audit log | S85–S89 |
+| Multi-provider claim shapes | S90–S97 |
 
 That is the full v0.6.0 surface area.
