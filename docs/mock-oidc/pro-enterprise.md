@@ -12,11 +12,14 @@ product evolution story.
 
 ## Tier overview
 
-| Tier | Pricing model | Delivery |
-|---|---|---|
-| **Community** | Free / open source | Self-hosted, ghcr.io image |
-| **Pro** | ~$29–49 / month per org | Hosted SaaS + enhanced features |
-| **Enterprise** | Annual, negotiated | Self-hosted Pro + SLA + integrations |
+| Tier | Pricing model | Delivery | Domain |
+|---|---|---|---|
+| **Community** | Free / open source | Self-hosted, ghcr.io image | your own |
+| **Sandbox** | Free, no signup | KSA hosted (shared, ephemeral) | `mock.ksatechnologies.dev/sandbox/` |
+| **Pro** | ~$29–49 / month per org | KSA hosted (org-isolated) | `mock.ksatechnologies.dev/{org}/` |
+| **Enterprise** | Annual, negotiated | KSA hosted or self-hosted | `idp.ksatechnologies.com/{org}/` |
+
+See [hosted-architecture.md](hosted-architecture.md) for routing design, domain rationale, and lab setup.
 
 ---
 
@@ -40,7 +43,7 @@ instances from runaway CI pipelines without requiring an API gateway.
 > User decision: this is the first Pro feature to build.
 
 A team gets a persistent subdomain:
-`https://mock.ksatechnologies.com/{org-slug}/{issuer}/token`
+`https://mock.ksatechnologies.dev/{org-slug}/{issuer}/token`
 
 **Why this first:**
 - Zero setup — works from ephemeral CI runners without a sidecar container
