@@ -1601,6 +1601,46 @@ def test_audit_multi_org_isolation():
     asyncio.run(run())
 
 
+# ── Prometheus /metrics endpoint ────────────────────────────────────────────
+
+
+def test_metrics_disabled_by_default(client):
+    """/metrics returns 404 when MOCK_IDP_METRICS_ENABLED is not set."""
+    r = client.get("/metrics")
+    assert r.status_code == 404
+
+
+def test_metrics_enabled_returns_prometheus_text():
+    """When instrumented, /metrics returns 200 with Prometheus text format."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from prometheus_fastapi_instrumentator import Instrumentator
+
+    test_app = FastAPI()
+    Instrumentator().instrument(test_app).expose(test_app)
+
+    with TestClient(test_app) as c:
+        r = c.get("/metrics")
+    assert r.status_code == 200
+    assert "text/plain" in r.headers.get("content-type", "")
+
+
+def test_metrics_env_var_gates_instrumentation():
+    """MOCK_IDP_METRICS_ENABLED=true causes /metrics route to be registered."""
+    import importlib
+    from unittest.mock import patch
+
+    with patch.dict(os.environ, {"MOCK_IDP_METRICS_ENABLED": "true"}):
+        import mock_idp.main as main_mod
+        importlib.reload(main_mod)
+        from fastapi.testclient import TestClient as _TC
+        with _TC(main_mod.app) as c:
+            r = c.get("/metrics")
+        assert r.status_code == 200
+
+    importlib.reload(main_mod)
+
+
 # ── Multi-provider claim shapes ────────────────────────────────────────────
 
 

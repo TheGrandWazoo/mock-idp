@@ -43,6 +43,20 @@ adminToken:
   # Takes precedence over `value`.
   existingSecret: ""
 
+metrics:
+  # -- Enable Prometheus /metrics endpoint.
+  # Requires the `metrics` extra: uv sync --extra metrics
+  # Sets MOCK_IDP_METRICS_ENABLED=true in the container environment.
+  enabled: false
+  # -- Create a Prometheus ServiceMonitor resource (requires prometheus-operator CRDs).
+  serviceMonitor:
+    # -- Enable ServiceMonitor creation when metrics.enabled is true.
+    enabled: false
+    # -- Scrape interval.
+    interval: 30s
+    # -- Additional labels for the ServiceMonitor (e.g. to match a Prometheus selector).
+    additionalLabels: {}
+
 # -- Resource requests and limits for the mock-idp container.
 resources:
   requests:

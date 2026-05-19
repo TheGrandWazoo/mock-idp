@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -10,6 +11,8 @@ from . import config as _cfg
 from .routers import admin, debug, oidc, playground
 
 _log = logging.getLogger(__name__)
+
+_METRICS_ENABLED = os.getenv("MOCK_IDP_METRICS_ENABLED", "").lower() in ("1", "true", "yes")
 
 
 async def _watch_config() -> None:
@@ -68,3 +71,14 @@ app.include_router(oidc.router)
 app.include_router(debug.router)
 app.include_router(admin.router)
 app.include_router(playground.router)
+
+if _METRICS_ENABLED:
+    try:
+        from prometheus_fastapi_instrumentator import Instrumentator  # noqa: PLC0415
+        Instrumentator().instrument(app).expose(app)
+        _log.info("Prometheus metrics enabled at /metrics")
+    except ImportError:
+        _log.warning(
+            "MOCK_IDP_METRICS_ENABLED=true but prometheus-fastapi-instrumentator is not installed. "
+            "Install with:  uv sync --extra metrics"
+        )

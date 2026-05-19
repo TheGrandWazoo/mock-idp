@@ -50,7 +50,7 @@ Shipped in issue #45. Provider is per-tenant via `_provider` PrivateAttr
 injected at load time. config.example.yaml updated with sample tenants for
 each provider. Test scenarios S90–S97 added.
 
-### 🟢 Prometheus /metrics endpoint
+### ✅ Prometheus /metrics endpoint — Resolved
 
 `GET /metrics` via `prometheus-fastapi-instrumentator`. Exposes request
 count, latency histogram, and active connections. Required for hosted
@@ -58,6 +58,10 @@ service SLO monitoring (Linode LKE + Prometheus stack).
 
 **Scope note:** the "maybe-never" status on observability was for a test
 fixture. For a hosted SaaS, metrics are a hard operational requirement.
+
+Shipped in issue #46. Gated by `MOCK_IDP_METRICS_ENABLED=true`; disabled
+by default. Helm chart `metrics.enabled` + `metrics.serviceMonitor.enabled`
+wires Prometheus scraping. Optional dep: `uv sync --extra metrics`.
 
 ---
 

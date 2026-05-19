@@ -1554,6 +1554,58 @@ curl -s -H "x-admin-token: change-me-in-real-deployments" \
 
 ---
 
+## S98–S99 Prometheus /metrics endpoint (v0.6.0+)
+
+> Requires `uv sync --extra metrics` (or `MOCK_IDP_METRICS_ENABLED=true` with the
+> package installed) for the server, but the `metrics` extra is included in dev
+> dependencies so tests always run.
+
+### S98 — /metrics disabled by default
+
+```bash
+curl -s http://localhost:8080/metrics
+# → 404 Not Found
+```
+
+No `/metrics` route is registered unless `MOCK_IDP_METRICS_ENABLED=true`.
+
+### S99 — /metrics enabled returns Prometheus text format
+
+```bash
+MOCK_IDP_METRICS_ENABLED=true uv run uvicorn mock_idp.main:app --port 8080
+
+curl -s http://localhost:8080/metrics
+# → 200 OK
+# Content-Type: text/plain; version=0.0.4; charset=utf-8
+# # HELP http_requests_total Total HTTP requests.
+# # TYPE http_requests_total counter
+# http_requests_total{...} 3.0
+# ...
+```
+
+**Helm chart (Kubernetes):**
+
+```yaml
+# values.yaml
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true          # requires prometheus-operator CRDs
+    interval: 30s
+    additionalLabels:
+      release: prometheus  # must match your Prometheus operator selector
+```
+
+**Troubleshooting:**
+
+- `/metrics` returns 404 despite `MOCK_IDP_METRICS_ENABLED=true` → the
+  `prometheus-fastapi-instrumentator` package is not installed. Run
+  `uv sync --extra metrics`.
+- ServiceMonitor not picked up → verify `additionalLabels` matches your
+  Prometheus operator's `serviceMonitorSelector`.
+
+---
+
 ## S90–S99 Multi-provider claim shapes (v0.6.0+)
 
 Set `provider:` on a tenant to control which claim shape is emitted.
@@ -1730,6 +1782,7 @@ first token is requested for that tenant. Existing tenants continue to work.
 | Secret references (from_env / from_file) | S79–S81 |
 | Realm roles | S82–S84 |
 | Token audit log | S85–S89 |
+| Prometheus /metrics endpoint | S98–S99 |
 | Multi-provider claim shapes | S90–S97 |
 
 That is the full v0.6.0 surface area.

@@ -37,6 +37,10 @@ spec:
                   name: {{ if .Values.adminToken.existingSecret }}{{ .Values.adminToken.existingSecret }}{{ else }}{{ include "mock-idp.fullname" . }}-admin-token{{ end }}
                   key: admin-token
             {{- end }}
+            {{- if .Values.metrics.enabled }}
+            - name: MOCK_IDP_METRICS_ENABLED
+              value: "true"
+            {{- end }}
           volumeMounts:
             - name: config
               mountPath: /etc/mock-idp
