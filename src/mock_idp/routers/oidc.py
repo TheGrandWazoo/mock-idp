@@ -5,6 +5,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .. import config as _cfg
+from .. import ratelimit as _rl
 from ..keys import get_alt_key_for_alg, get_jwks_keys, get_signing_key_for_alg, get_signing_public_key_pem
 from ..providers import get_provider
 from ..tokens import (
@@ -31,7 +32,10 @@ router = APIRouter()
 
 @router.get("/healthz")
 async def healthz():
-    return {"status": "ok"}
+    response: dict = {"status": "ok"}
+    if _rl.ENABLED:
+        response["rate_limit"] = {"enabled": True, "limit": _rl.RATE_LIMIT}
+    return response
 
 
 @router.get("/{issuer}/.well-known/openid-configuration")
@@ -66,6 +70,7 @@ async def jwks(issuer: str, request: Request):
 
 
 @router.post("/{issuer}/token")
+@_rl.limit
 async def token(issuer: str, request: Request):
     form = dict(await request.form())
     headers = {k.lower(): v for k, v in request.headers.items()}

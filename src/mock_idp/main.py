@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from watchfiles import awatch
 
 from . import config as _cfg
+from . import ratelimit as _rl
 from .routers import admin, debug, oidc, playground
 
 _log = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ async def lifespan(app: FastAPI):
     await _cfg.store.shutdown()
 
 
-app = FastAPI(title="Mock IDP", version="0.4.2", lifespan=lifespan)
+app = FastAPI(title="Mock IDP", version="0.6.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cfg.CORS_ORIGINS,
@@ -71,6 +72,25 @@ app.include_router(oidc.router)
 app.include_router(debug.router)
 app.include_router(admin.router)
 app.include_router(playground.router)
+
+if _rl.ENABLED and _rl.limiter is not None:
+    from slowapi.errors import RateLimitExceeded  # noqa: PLC0415
+    from slowapi.middleware import SlowAPIMiddleware  # noqa: PLC0415
+    from starlette.requests import Request as _Request  # noqa: PLC0415
+    from starlette.responses import JSONResponse as _JSONResponse  # noqa: PLC0415
+
+    async def _rate_limit_handler(_request: _Request, exc: RateLimitExceeded) -> _JSONResponse:
+        retry_after = getattr(exc, "retry_after", 60)
+        return _JSONResponse(
+            status_code=429,
+            content={"error": "rate_limit_exceeded", "detail": str(exc)},
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    app.state.limiter = _rl.limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
+    app.add_middleware(SlowAPIMiddleware)
+    _log.info("Rate limiting enabled: %s (per source IP)", _rl.RATE_LIMIT)
 
 if _METRICS_ENABLED:
     try:

@@ -57,6 +57,14 @@ metrics:
     # -- Additional labels for the ServiceMonitor (e.g. to match a Prometheus selector).
     additionalLabels: {}
 
+rateLimit:
+  # -- Enable per-IP rate limiting on the /token endpoint via slowapi.
+  # Requires the `ratelimit` extra: uv sync --extra ratelimit
+  # Sets MOCK_IDP_RATE_LIMIT to `<requestsPerMinute>/minute`.
+  enabled: false
+  # -- Maximum token requests per minute per source IP.
+  requestsPerMinute: 60
+
 # -- Resource requests and limits for the mock-idp container.
 resources:
   requests:

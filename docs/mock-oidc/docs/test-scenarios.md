@@ -1606,6 +1606,70 @@ metrics:
 
 ---
 
+## S100–S102 In-app rate limiting (v0.6.0+)
+
+> Requires `uv sync --extra ratelimit` (or `slowapi` installed). Enable with
+> `MOCK_IDP_RATE_LIMIT=<N>/minute`. Only the `/token` endpoint is rate-limited.
+> The rate limit extra is included in dev dependencies so tests always run.
+
+### S100 — Rate limiting disabled by default
+
+```bash
+# Without MOCK_IDP_RATE_LIMIT set, no rate limiting is applied.
+# /healthz returns no rate_limit key.
+curl -s http://localhost:8080/healthz | jq .
+# → {"status": "ok"}
+```
+
+### S101 — /healthz reports rate limit when enabled
+
+```bash
+MOCK_IDP_RATE_LIMIT=60/minute uv run uvicorn mock_idp.main:app --port 8080
+
+curl -s http://localhost:8080/healthz | jq .
+# → {"status": "ok", "rate_limit": {"enabled": true, "limit": "60/minute"}}
+```
+
+### S102 — 429 with Retry-After when limit exceeded
+
+```bash
+MOCK_IDP_RATE_LIMIT=1/minute uv run uvicorn mock_idp.main:app --port 8080
+
+# First request succeeds.
+curl -s -o /dev/null -w "%{http_code}" -X POST \
+  http://localhost:8080/default/token \
+  -d "grant_type=client_credentials&client_id=...&client_secret=..."
+# → 200
+
+# Second request from same IP within the same minute returns 429.
+curl -si -X POST http://localhost:8080/default/token \
+  -d "grant_type=client_credentials&client_id=...&client_secret=..."
+# → HTTP/1.1 429 Too Many Requests
+# Retry-After: 60
+# {"error": "rate_limit_exceeded", "detail": "..."}
+```
+
+**Helm chart (Kubernetes):**
+
+```yaml
+# values.yaml
+rateLimit:
+  enabled: true
+  requestsPerMinute: 60
+```
+
+**Troubleshooting:**
+
+- `/token` not rate-limited despite env var → `slowapi` not installed; run
+  `uv sync --extra ratelimit`. A warning is logged at startup if the package
+  is missing.
+- 429 response missing `Retry-After` → upgrade to v0.6.0; earlier versions
+  used slowapi's default handler which omitted the header.
+- Rate limit applies per source IP. Adjust `requestsPerMinute` per your
+  expected CI concurrency; 60/minute is safe for most single-runner setups.
+
+---
+
 ## S90–S99 Multi-provider claim shapes (v0.6.0+)
 
 Set `provider:` on a tenant to control which claim shape is emitted.
@@ -1784,5 +1848,6 @@ first token is requested for that tenant. Existing tenants continue to work.
 | Token audit log | S85–S89 |
 | Prometheus /metrics endpoint | S98–S99 |
 | Multi-provider claim shapes | S90–S97 |
+| In-app rate limiting | S100–S102 |
 
 That is the full v0.6.0 surface area.

@@ -3,10 +3,11 @@
 What's not yet shipped, what's worth doing next, and what's parked unless a
 specific need surfaces.
 
-Current release is **v0.5.6**. The v0.3 surface is documented in ADR-002 and
+Current release is **v0.6.0**. The v0.3 surface is documented in ADR-002 and
 ADR-003. The v0.4 surface is documented in ADR-003 (Postgres backend) and the
 commit history. The v0.5 surface is documented in ADR-004 (per-issuer signing
-keys) and the commit history.
+keys) and the commit history. The v0.6 surface is documented in the v0.6.0
+milestone issues (#44, #45, #46, #52).
 
 ---
 
@@ -62,6 +63,18 @@ fixture. For a hosted SaaS, metrics are a hard operational requirement.
 Shipped in issue #46. Gated by `MOCK_IDP_METRICS_ENABLED=true`; disabled
 by default. Helm chart `metrics.enabled` + `metrics.serviceMonitor.enabled`
 wires Prometheus scraping. Optional dep: `uv sync --extra metrics`.
+
+### ✅ In-app rate limiting — Resolved
+
+Per-IP rate limiting on `POST /{issuer}/token` via `slowapi`. Enabled by
+setting `MOCK_IDP_RATE_LIMIT=<N>/minute`. Returns `429 Too Many Requests`
+with `Retry-After` header when the limit is exceeded. `/healthz` reports
+rate-limit state when enabled.
+
+Shipped in issue #52. Gated by `MOCK_IDP_RATE_LIMIT` env var; no-op when
+unset. Helm chart `rateLimit.enabled` + `rateLimit.requestsPerMinute` wires
+the env var. Optional dep: `uv sync --extra ratelimit`. Test scenarios
+S100–S102 added.
 
 ---
 

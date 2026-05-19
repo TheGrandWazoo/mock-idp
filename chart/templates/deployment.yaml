@@ -41,6 +41,10 @@ spec:
             - name: MOCK_IDP_METRICS_ENABLED
               value: "true"
             {{- end }}
+            {{- if .Values.rateLimit.enabled }}
+            - name: MOCK_IDP_RATE_LIMIT
+              value: {{ .Values.rateLimit.requestsPerMinute | quote }}/minute
+            {{- end }}
           volumeMounts:
             - name: config
               mountPath: /etc/mock-idp

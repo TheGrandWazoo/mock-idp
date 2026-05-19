@@ -1601,6 +1601,72 @@ def test_audit_multi_org_isolation():
     asyncio.run(run())
 
 
+# ── Rate limiting (slowapi) ───────────────────────────────────────────────
+
+
+def test_rate_limit_disabled_by_default(client):
+    """No rate limiting by default — healthz has no rate_limit key."""
+    r = client.get("/healthz")
+    assert r.status_code == 200
+    assert "rate_limit" not in r.json()
+
+
+def test_rate_limit_enabled_shows_in_healthz():
+    """MOCK_IDP_RATE_LIMIT=10/minute → healthz includes rate_limit info."""
+    import importlib
+    from unittest.mock import patch
+
+    with patch.dict(os.environ, {"MOCK_IDP_RATE_LIMIT": "10/minute"}):
+        import mock_idp.ratelimit as rl_mod
+        importlib.reload(rl_mod)
+        import mock_idp.routers.oidc as oidc_mod
+        importlib.reload(oidc_mod)
+        import mock_idp.main as main_mod
+        importlib.reload(main_mod)
+        from fastapi.testclient import TestClient as _TC
+        with _TC(main_mod.app) as c:
+            r = c.get("/healthz")
+        assert r.status_code == 200
+        data = r.json()
+        assert data.get("rate_limit", {}).get("enabled") is True
+        assert data.get("rate_limit", {}).get("limit") == "10/minute"
+
+    for mod in ("mock_idp.ratelimit", "mock_idp.routers.oidc", "mock_idp.main"):
+        importlib.reload(__import__(mod, fromlist=[""]))
+
+
+def test_rate_limit_429_when_exceeded():
+    """Requests beyond the limit return 429 with Retry-After header."""
+    import importlib
+    from unittest.mock import patch
+
+    with patch.dict(os.environ, {"MOCK_IDP_RATE_LIMIT": "2/minute"}):
+        import mock_idp.ratelimit as rl_mod
+        importlib.reload(rl_mod)
+        import mock_idp.routers.oidc as oidc_mod
+        importlib.reload(oidc_mod)
+        import mock_idp.main as main_mod
+        importlib.reload(main_mod)
+        from fastapi.testclient import TestClient as _TC
+        with _TC(main_mod.app) as c:
+            for _ in range(2):
+                c.post(
+                    "/default/token",
+                    data={"grant_type": "password", "username": "alice",
+                          "password": "alice-pw", "resource": "api://serviceB"},
+                )
+            r = c.post(
+                "/default/token",
+                data={"grant_type": "password", "username": "alice",
+                      "password": "alice-pw", "resource": "api://serviceB"},
+            )
+        assert r.status_code == 429
+        assert "retry-after" in {k.lower() for k in r.headers}
+
+    for mod in ("mock_idp.ratelimit", "mock_idp.routers.oidc", "mock_idp.main"):
+        importlib.reload(__import__(mod, fromlist=[""]))
+
+
 # ── Prometheus /metrics endpoint ────────────────────────────────────────────
 
 
