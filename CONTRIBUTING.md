@@ -140,6 +140,30 @@ uv run uvicorn mock_idp.main:app --reload --port 8080
 uv run pytest tests -v
 ```
 
+#### Postgres backend (optional)
+
+If you are working on the Postgres backend, apply the schema before starting the server:
+
+```bash
+# Install Postgres extras
+uv sync --extra postgres
+
+# Set connection string
+export MOCK_IDP_BACKEND=postgres
+export MOCK_IDP_PG_DSN=postgresql://user:pass@localhost/mock_idp
+
+# Apply all migrations (including multi-org schema + token_events)
+uv run alembic upgrade head
+```
+
+When adding a schema change, generate a new Alembic revision:
+
+```bash
+uv run alembic revision -m "short_description"
+# Edit alembic/versions/<rev>_short_description.py
+# Both upgrade() and downgrade() must be implemented.
+```
+
 All tests must pass and ruff must be clean before opening a PR:
 
 ```bash

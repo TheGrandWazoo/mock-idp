@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 
 from ..models import ClientAppRecord, ServicePrincipalRecord, UserRecord
 
@@ -46,6 +47,7 @@ class PostgresIdentityStore:
 
         self._dsn = dsn
         self._pool = None  # created in startup()
+        self._org_id: str = os.environ.get("MOCK_IDP_ORG_ID", "default")
 
         # Scalars — replaced on reload; config.py re-reads them.
         self._mode: str = "lax"
@@ -135,14 +137,91 @@ class PostgresIdentityStore:
         except Exception:
             _log.exception("Postgres reload failed — keeping current state")
 
+    async def write_token_event(self, event: dict) -> None:
+        """Write one row to token_events. Never raises — failures are logged."""
+        if self._pool is None:
+            return
+        try:
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO token_events
+                        (org_id, issuer, grant_type, sub, aud, iat, exp, jti, raw_claims)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+                    """,
+                    self._org_id,
+                    event.get("iss", ""),
+                    event.get("grant_type", ""),
+                    event.get("sub", ""),
+                    event.get("aud"),
+                    int(event.get("iat", 0)),
+                    int(event.get("exp", 0)),
+                    event.get("jti"),
+                    json.dumps(event),
+                )
+        except Exception:
+            _log.exception("write_token_event failed — token issuance unaffected")
+
+    async def query_audit(self, limit: int, cursor: int) -> tuple[list[dict], int | None]:
+        """Return up to *limit* token_events with id > cursor for this org."""
+        if self._pool is None:
+            return [], None
+        try:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT id, org_id, issuer, grant_type, sub, aud,
+                           iat, exp, jti, raw_claims, created_at
+                    FROM token_events
+                    WHERE org_id = $1 AND id > $2
+                    ORDER BY id ASC
+                    LIMIT $3
+                    """,
+                    self._org_id,
+                    cursor,
+                    limit + 1,
+                )
+        except Exception:
+            _log.exception("query_audit failed")
+            return [], None
+
+        has_more = len(rows) > limit
+        page = rows[:limit]
+        events = [
+            {
+                "id": r["id"],
+                "org_id": r["org_id"],
+                "issuer": r["issuer"],
+                "grant_type": r["grant_type"],
+                "sub": r["sub"],
+                "aud": r["aud"],
+                "iat": r["iat"],
+                "exp": r["exp"],
+                "jti": r["jti"],
+                "raw_claims": _parse_jsonb(r["raw_claims"]),
+                "created_at": r["created_at"].isoformat(),
+            }
+            for r in page
+        ]
+        next_cursor = page[-1]["id"] if has_more else None
+        return events, next_cursor
+
     # ── Internal helpers ───────────────────────────────────────────────────
 
     async def _fetch_and_apply(self) -> None:
         async with self._pool.acquire() as conn:
-            cfg_row = await conn.fetchrow("SELECT * FROM app_config LIMIT 1")
-            user_rows = await conn.fetch("SELECT * FROM users")
-            sp_rows = await conn.fetch("SELECT * FROM service_principals")
-            app_rows = await conn.fetch("SELECT * FROM client_apps")
+            cfg_row = await conn.fetchrow(
+                "SELECT * FROM app_config WHERE org_id = $1", self._org_id
+            )
+            user_rows = await conn.fetch(
+                "SELECT * FROM users WHERE org_id = $1", self._org_id
+            )
+            sp_rows = await conn.fetch(
+                "SELECT * FROM service_principals WHERE org_id = $1", self._org_id
+            )
+            app_rows = await conn.fetch(
+                "SELECT * FROM client_apps WHERE org_id = $1", self._org_id
+            )
 
         # Scalars
         if cfg_row:

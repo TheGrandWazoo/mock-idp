@@ -1438,6 +1438,169 @@ def test_override_roles_absent_keeps_configured_roles(client):
     assert sorted(payload.get("roles", [])) == expected
 
 
+# ── Token Audit Log ────────────────────────────────────────────────────────
+
+_ADMIN_TOKEN = "change-me-in-real-deployments"
+
+
+def test_audit_endpoint_requires_admin_token(client):
+    r = client.get("/admin/audit")
+    assert r.status_code == 403
+
+    r = client.get("/admin/audit", headers={"x-admin-token": "wrong"})
+    assert r.status_code == 403
+
+
+def test_audit_yaml_backend_returns_empty_list(client):
+    """YAML backend always returns an empty audit log."""
+    r = client.get("/admin/audit", headers={"x-admin-token": _ADMIN_TOKEN})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["events"] == []
+    assert data["next_cursor"] is None
+
+
+def test_audit_limit_and_cursor_params_accepted(client):
+    """Endpoint accepts limit and cursor query params without error."""
+    r = client.get(
+        "/admin/audit",
+        headers={"x-admin-token": _ADMIN_TOKEN},
+        params={"limit": 10, "cursor": 0},
+    )
+    assert r.status_code == 200
+
+
+def test_audit_limit_validation(client):
+    """limit must be 1–200; out-of-range values return 422."""
+    r = client.get(
+        "/admin/audit",
+        headers={"x-admin-token": _ADMIN_TOKEN},
+        params={"limit": 0},
+    )
+    assert r.status_code == 422
+
+    r = client.get(
+        "/admin/audit",
+        headers={"x-admin-token": _ADMIN_TOKEN},
+        params={"limit": 201},
+    )
+    assert r.status_code == 422
+
+
+def test_audit_write_does_not_break_token_issuance(client):
+    """write_token_event failure must not prevent token issuance."""
+    from unittest.mock import AsyncMock, patch
+
+    import mock_idp.config as m
+
+    broken = AsyncMock(side_effect=RuntimeError("simulated DB failure"))
+    with patch.object(m.store, "write_token_event", broken):
+        r = client.post(
+            "/default/token",
+            data={"grant_type": "password", "username": "alice",
+                  "password": "alice-pw", "resource": "api://serviceB"},
+        )
+    assert r.status_code == 200
+    assert "access_token" in r.json()
+
+
+def test_audit_write_called_on_password_grant(client):
+    """write_token_event is awaited on every successful password grant."""
+    from unittest.mock import AsyncMock, call, patch
+
+    import mock_idp.config as m
+
+    spy = AsyncMock()
+    with patch.object(m.store, "write_token_event", spy):
+        r = client.post(
+            "/default/token",
+            data={"grant_type": "password", "username": "alice",
+                  "password": "alice-pw", "resource": "api://serviceB"},
+        )
+    assert r.status_code == 200
+    spy.assert_awaited_once()
+    event = spy.call_args[0][0]
+    assert event.get("grant_type") == "password"
+    assert "sub" in event
+
+
+def test_audit_write_called_on_client_credentials(client):
+    """write_token_event is awaited on every successful client_credentials grant."""
+    from unittest.mock import AsyncMock, patch
+
+    import mock_idp.config as m
+
+    spy = AsyncMock()
+    with patch.object(m.store, "write_token_event", spy):
+        r = client.post(
+            "/default/token",
+            data={"grant_type": "client_credentials", "client_id": "service-a",
+                  "client_secret": "serviceA-secret", "resource": "api://serviceB"},
+        )
+    assert r.status_code == 200
+    spy.assert_awaited_once()
+    event = spy.call_args[0][0]
+    assert event.get("grant_type") == "client_credentials"
+
+
+def test_audit_write_called_on_token_exchange(client):
+    """write_token_event is awaited on every successful token-exchange."""
+    from unittest.mock import AsyncMock, patch
+
+    import mock_idp.config as m
+
+    user_token = client.post(
+        "/default/token",
+        data={"grant_type": "password", "username": "alice",
+              "password": "alice-pw", "resource": "api://serviceB"},
+    ).json()["access_token"]
+
+    spy = AsyncMock()
+    with patch.object(m.store, "write_token_event", spy):
+        r = client.post(
+            "/default/token",
+            data={
+                "grant_type": _TOKEN_EXCHANGE,
+                "subject_token": user_token,
+                "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+                "client_id": "service-a",
+                "client_secret": "serviceA-secret",
+                "audience": "api://serviceB",
+            },
+        )
+    assert r.status_code == 200
+    spy.assert_awaited_once()
+    event = spy.call_args[0][0]
+    assert event.get("grant_type") == _TOKEN_EXCHANGE
+
+
+def test_audit_multi_org_isolation():
+    """Stores with different org_ids cannot read each other's data."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    async def run():
+        from mock_idp.store.yaml_store import YamlIdentityStore
+
+        store_a = YamlIdentityStore.__new__(YamlIdentityStore)
+        store_b = YamlIdentityStore.__new__(YamlIdentityStore)
+
+        events_a: list[dict] = [{"org": "a", "id": 1}]
+        events_b: list[dict] = [{"org": "b", "id": 2}]
+
+        store_a.query_audit = AsyncMock(return_value=(events_a, None))
+        store_b.query_audit = AsyncMock(return_value=(events_b, None))
+
+        result_a, _ = await store_a.query_audit(limit=50, cursor=0)
+        result_b, _ = await store_b.query_audit(limit=50, cursor=0)
+
+        assert result_a == events_a
+        assert result_b == events_b
+        assert result_a != result_b
+
+    asyncio.run(run())
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 

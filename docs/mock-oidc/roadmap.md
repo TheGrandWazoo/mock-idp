@@ -23,7 +23,7 @@ keys) and the commit history.
 GitHub Milestone #2. Lays the database schema and observability groundwork
 for the hosted Pro service. All items are community-visible.
 
-### 🟢 Token audit log + multi-org schema
+### ✅ Token audit log + multi-org schema — Resolved
 
 Every `/token` call written to a `token_events` table keyed by `org_id`.
 Queryable via `GET /admin/audit?limit=&cursor=`. Requires extending the
@@ -32,6 +32,9 @@ Postgres schema with a multi-org layout (shared `tenants`, `users`,
 
 **Design constraint:** single-node Postgres today; schema must support
 CloudNativePG HA promotion at ~50 paying orgs without a migration.
+
+Shipped in issue #44. Alembic migration 0002 adds `org_id` to all tables
+and creates `token_events`. `MOCK_IDP_ORG_ID` env var sets tenant scope.
 
 ### 🟢 Multi-provider claim shapes
 

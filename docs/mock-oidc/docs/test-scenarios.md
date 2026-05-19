@@ -1477,6 +1477,83 @@ Navigate to `GET /` and:
 
 ---
 
+## S85–S89 Token audit log (Postgres backend, v0.6.0+)
+
+> These scenarios require `MOCK_IDP_BACKEND=postgres` and a migrated database
+> (`uv run alembic upgrade head`). S85–S87 can be exercised with the YAML
+> backend — they just return an empty list.
+
+### S85 — Audit endpoint blocked without admin token
+
+```bash
+curl -s http://localhost:8080/admin/audit
+# → 403 Forbidden
+```
+
+### S86 — Audit endpoint returns empty list for YAML backend
+
+```bash
+curl -s -H "x-admin-token: change-me-in-real-deployments" \
+     http://localhost:8080/admin/audit
+# → {"events": [], "next_cursor": null}
+```
+
+### S87 — Audit endpoint validates limit parameter
+
+```bash
+curl -s -H "x-admin-token: change-me-in-real-deployments" \
+     "http://localhost:8080/admin/audit?limit=0"
+# → 422 Unprocessable Entity
+
+curl -s -H "x-admin-token: change-me-in-real-deployments" \
+     "http://localhost:8080/admin/audit?limit=201"
+# → 422 Unprocessable Entity
+```
+
+### S88 — Audit log written on every grant type (Postgres)
+
+Issue tokens with each grant type, then query the audit log:
+
+```bash
+# 1. password grant
+curl -s -X POST http://localhost:8080/default/token \
+  -d 'grant_type=password&username=alice&password=alice-pw&resource=api://serviceB'
+
+# 2. client_credentials grant
+curl -s -X POST http://localhost:8080/default/token \
+  -d 'grant_type=client_credentials&client_id=service-a&client_secret=serviceA-secret&resource=api://serviceB'
+
+# 3. query audit log
+curl -s -H "x-admin-token: change-me-in-real-deployments" \
+     "http://localhost:8080/admin/audit?limit=10"
+# → {"events": [{...}, {...}], "next_cursor": null}
+```
+
+Each event contains: `id`, `org_id`, `issuer`, `grant_type`, `sub`, `aud`, `iat`, `exp`, `jti`, `raw_claims`, `created_at`.
+
+### S89 — Cursor-based pagination
+
+```bash
+# Page 1 — first 2 events
+curl -s -H "x-admin-token: change-me-in-real-deployments" \
+     "http://localhost:8080/admin/audit?limit=2&cursor=0"
+# → {"events": [{...}, {...}], "next_cursor": 2}
+
+# Page 2 — pass next_cursor as cursor
+curl -s -H "x-admin-token: change-me-in-real-deployments" \
+     "http://localhost:8080/admin/audit?limit=2&cursor=2"
+# → {"events": [{...}], "next_cursor": null}   ← last page
+```
+
+**Troubleshooting:**
+
+- `events` always empty with Postgres → run `uv run alembic upgrade head` to apply
+  migration 0002 and create the `token_events` table.
+- `org_id` mismatch → `MOCK_IDP_ORG_ID` must match between the server that
+  issued the tokens and the server being queried.  Default is `"default"`.
+
+---
+
 ## Coverage summary
 
 | Area | Scenarios |
@@ -1508,5 +1585,6 @@ Navigate to `GET /` and:
 | Role override (X-Override-Roles) | S76–S78 |
 | Secret references (from_env / from_file) | S79–S81 |
 | Realm roles | S82–S84 |
+| Token audit log | S85–S89 |
 
-That is the full v0.5.5 surface area.
+That is the full v0.6.0 surface area.

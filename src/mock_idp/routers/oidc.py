@@ -1,9 +1,12 @@
+import logging
 import time
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .. import config as _cfg
+
+_log = logging.getLogger(__name__)
 from ..keys import get_alt_key_for_alg, get_jwks_keys, get_signing_key_for_alg, get_signing_public_key_pem
 from ..webhooks import fire_webhooks
 from ..providers import get_provider
@@ -153,6 +156,10 @@ async def token(issuer: str, request: Request):
             "grant_type": grant_type,
             "claims": claims,
         })
+        try:
+            await _cfg.store.write_token_event({**claims, "grant_type": grant_type})
+        except Exception:
+            _log.exception("write_token_event failed — token issuance unaffected")
         return {
             "access_token": access_token,
             "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
@@ -170,6 +177,10 @@ async def token(issuer: str, request: Request):
         "grant_type": grant_type,
         "claims": claims,
     })
+    try:
+        await _cfg.store.write_token_event({**claims, "grant_type": grant_type})
+    except Exception:
+        _log.exception("write_token_event failed — token issuance unaffected")
     return {
         "access_token": access_token,
         "token_type": "Bearer",

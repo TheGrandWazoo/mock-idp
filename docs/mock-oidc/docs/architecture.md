@@ -52,6 +52,9 @@ POST /admin/rotate-jwks[?issuer=<slug>]               Rotate one issuer's signin
                                                        (gated by X-Admin-Token header)
 POST /admin/reload-config                             Reload identity data from the backing store
                                                        without restarting (gated by X-Admin-Token)
+GET  /admin/audit[?limit=N&cursor=C]                  Paginated token event log (Postgres backend only;
+                                                       returns empty list for YAML backend)
+                                                       (gated by X-Admin-Token header)
 ```
 
 The `issuer` path parameter is any URL-safe slug — `default`, `tenant-a`,
@@ -745,7 +748,83 @@ operator; negligible impact.
 | `/admin/rotate-jwks` called inadvertently | Existing in-flight tokens for affected issuers reject until clients reacquire | Document the test pattern; gate the endpoint behind `admin_token` |
 | Token playground accidentally exposed publicly | Anyone with the URL can mint tokens | Internal-only ingress, not internet-facing |
 
-No data persistence, so no data-loss failure modes.
+No data persistence, so no data-loss failure modes (YAML backend).
+
+With the Postgres backend, `token_events` rows are append-only and not deleted by
+the application — storage grows monotonically. Plan for periodic archival or
+partitioning at scale.
+
+---
+
+## Multi-org schema (v0.6.0+)
+
+All Postgres tables carry an `org_id TEXT NOT NULL DEFAULT 'default'` column.
+This scopes every row to an organisation and is the foundation for the hosted
+Pro service multi-tenancy model.
+
+### Environment variable
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MOCK_IDP_ORG_ID` | `default` | Org context for the Postgres backend. All reads/writes use this value. |
+
+Single-org deployments (self-hosted, default Docker) leave `MOCK_IDP_ORG_ID`
+unset — every row uses `org_id='default'`. The hosted endpoint (v0.7.0) will
+route per-org by overriding this per-request.
+
+### Schema layout
+
+```
+app_config          org_id PK — one config row per org
+tenants             (org_id, tid) PK
+users               (org_id, username, tid) PK
+service_principals  (org_id, name, tid) PK
+client_apps         (org_id, audience, tid) PK
+token_events        id BIGSERIAL PK, org_id indexed — append-only audit log
+```
+
+FKs from `users`, `service_principals`, and `client_apps` reference
+`tenants(org_id, tid)` — rows in one org cannot reference tenants in another.
+
+### token_events table
+
+Every successful `/token` call (all grant types) appends one row:
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | BIGSERIAL | Cursor for pagination |
+| `org_id` | TEXT | Org scope |
+| `issuer` | TEXT | Issuer slug (e.g. `default`) |
+| `grant_type` | TEXT | `password`, `client_credentials`, `token-exchange` |
+| `sub` | TEXT | Subject from the issued token |
+| `aud` | TEXT | Audience from the issued token |
+| `iat` | BIGINT | Issued-at Unix timestamp |
+| `exp` | BIGINT | Expiry Unix timestamp |
+| `jti` | TEXT | JWT ID (if present) |
+| `raw_claims` | JSONB | Full claims dict |
+| `created_at` | TIMESTAMPTZ | Wall-clock insert time |
+
+Index: `(org_id, created_at DESC)` for per-org chronological queries.
+
+### GET /admin/audit
+
+```text
+GET /admin/audit?limit=50&cursor=0
+X-Admin-Token: <admin_token>
+
+→ {
+    "events": [ { "id": 1, "issuer": "default", "grant_type": "password",
+                  "sub": "...", "aud": "...", "iat": 1234567890,
+                  "exp": 1234571490, "created_at": "2026-05-18T..." }, ... ],
+    "next_cursor": 51
+  }
+```
+
+- `limit` defaults to 50, max 200.
+- `cursor` is the last-seen `id` (exclusive lower bound). Omit or pass `0`
+  for the first page.
+- `next_cursor` is `null` when no further results exist.
+- Returns `{"events": [], "next_cursor": null}` for the YAML backend.
 
 ---
 

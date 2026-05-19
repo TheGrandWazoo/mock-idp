@@ -87,6 +87,31 @@ class IdentityStore(Protocol):
         """
         ...
 
+    async def write_token_event(self, event: dict) -> None:
+        """Append one row to the token audit log.
+
+        Called after every successful /token response (all grant types).
+        YAML backend is a no-op. Postgres backend writes to token_events.
+        Must never raise — failures are logged and swallowed so a DB hiccup
+        cannot block token issuance.
+        """
+        ...
+
+    async def query_audit(self, limit: int, cursor: int) -> tuple[list[dict], int | None]:
+        """Return a page of token_events for the current org.
+
+        Args:
+            limit:  Maximum number of rows to return (caller has already
+                    clamped to 1–200).
+            cursor: Exclusive lower bound on token_events.id.  Pass 0 for
+                    the first page.
+
+        Returns:
+            (events, next_cursor) where next_cursor is None when exhausted.
+            YAML backend always returns ([], None).
+        """
+        ...
+
 
 def create_store(backend: str = "yaml", **kwargs) -> IdentityStore:
     """Factory — instantiate and return the requested backend.

@@ -260,6 +260,12 @@ class YamlIdentityStore:
             len(self._client_apps),
         )
 
+    async def write_token_event(self, event: dict) -> None:
+        pass
+
+    async def query_audit(self, limit: int, cursor: int) -> tuple[list[dict], int | None]:
+        return [], None
+
     # ── Internal helpers ───────────────────────────────────────────────────
 
     def _read_raw(self) -> dict:
