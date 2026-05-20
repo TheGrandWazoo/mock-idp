@@ -1851,3 +1851,273 @@ first token is requested for that tenant. Existing tenants continue to work.
 | In-app rate limiting | S100–S102 |
 
 That is the full v0.6.0 surface area.
+
+---
+
+## S103–S115 Hosted routing — org-scoped endpoints (v0.7.0)
+
+**Requires:** `MOCK_IDP_HOSTED=true`, `MOCK_IDP_PG_DSN` set (or the test
+fixture's in-memory mock registry).
+
+---
+
+### S103 — Hosted OIDC discovery returns org-scoped URLs
+
+```http
+GET /acme-corp/default/.well-known/openid-configuration
+Authorization: Bearer <api_key>
+```
+
+Expected:
+
+```json
+{
+  "issuer": "http://localhost:8080/acme-corp/default",
+  "token_endpoint": "http://localhost:8080/acme-corp/default/token",
+  "jwks_uri": "http://localhost:8080/acme-corp/default/jwks"
+}
+```
+
+All URL fields must contain `/{org}/{issuer}` — not the flat `/{issuer}` form.
+
+---
+
+### S104 — Hosted JWKS returns at least one RSA key
+
+```http
+GET /acme-corp/default/jwks
+Authorization: Bearer <api_key>
+```
+
+Expected: `200`, `keys` array with at least one entry where `kty == "RSA"`.
+
+---
+
+### S105 — JWKS key IDs are stable across repeated calls
+
+Issue two sequential JWKS requests for the same org/issuer. The list of `kid`
+values must be identical in both responses.
+
+This confirms that key generation is not re-run on every request and that
+Postgres persistence (or in-memory cache) is working.
+
+---
+
+### S106 — Hosted password grant issues org-scoped token
+
+```http
+POST /acme-corp/default/token
+Authorization: Bearer <api_key>
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=password&username=alice&password=alice-pw&resource=api://serviceB
+```
+
+Expected: `200`, `access_token` present. Decoded `iss` claim must contain
+`/acme-corp/default`.
+
+---
+
+### S107 — Hosted password grant rejects wrong password
+
+```http
+POST /acme-corp/default/token
+Authorization: Bearer <api_key>
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=password&username=alice&password=wrong&resource=api://serviceB
+```
+
+Expected: `401`.
+
+---
+
+### S108 — Hosted client_credentials grant issues org-scoped token
+
+```http
+POST /acme-corp/default/token
+Authorization: Bearer <api_key>
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials&client_id=service-a&client_secret=serviceA-secret&resource=api://serviceB
+```
+
+Expected: `200`, decoded `iss` contains `/acme-corp/default`.
+
+---
+
+### S109 — Missing API key returns 401
+
+Omit the `Authorization` header on any Pro org endpoint.
+
+```http
+POST /acme-corp/default/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=password&username=alice&password=alice-pw&resource=api://serviceB
+```
+
+Expected: `401`, `{"detail": {"error": "invalid_api_key"}}`.
+
+---
+
+### S110 — Wrong API key returns 401
+
+```http
+POST /acme-corp/default/token
+Authorization: Bearer wrong-key-value
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=password&username=alice&password=alice-pw&resource=api://serviceB
+```
+
+Expected: `401`.
+
+---
+
+### S111 — Unknown org returns 404
+
+```http
+GET /nonexistent-org/default/jwks
+```
+
+Expected: `404`, `{"detail": {"error": "org_not_found"}}`.
+
+---
+
+### S112 — Sandbox org issues tokens without an API key
+
+```http
+POST /sandbox/default/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=password&username=alice&password=alice-pw&resource=api://serviceB
+```
+
+Expected: `200`, `access_token` present. No `Authorization` header required.
+
+---
+
+### S113 — Sandbox iss claim includes sandbox slug
+
+Use the token from S112. Decode its payload.
+
+Expected: `iss` contains `/sandbox/default`.
+
+---
+
+### S114 — Org isolation: different orgs have disjoint JWKS key IDs
+
+Fetch JWKS for `acme-corp/default` and `sandbox/default`.
+
+Expected: the two sets of `kid` values have no intersection (`isdisjoint`).
+
+This confirms that `_OrgKeyResolver` generates and persists independent key
+stores per org, never sharing key material between orgs.
+
+---
+
+### S115 — Hosted token signature verifies against org's JWKS
+
+1. Issue a token: `POST /acme-corp/default/token` (password grant).
+2. Fetch JWKS: `GET /acme-corp/default/jwks`.
+3. Verify the token signature using the JWKS.
+
+Expected: signature verification succeeds; decoded `sub` is not null.
+
+---
+
+## S116–S120 Hosted org admin CRUD (v0.7.0)
+
+All endpoints require `X-Admin-Token` header and `MOCK_IDP_HOSTED=true`.
+
+---
+
+### S116 — POST /admin/orgs provisions a new org and returns a one-time API key
+
+```http
+POST /admin/orgs
+X-Admin-Token: <admin_token>
+Content-Type: application/json
+
+{"slug": "new-corp", "tier": "pro"}
+```
+
+Expected: `200`, response contains `slug`, `tier`, `api_key`, `token_endpoint`,
+`jwks_uri`, and `note`. The `api_key` is a plaintext string returned exactly
+once.
+
+A second `POST /admin/orgs` with the same slug returns `409
+{"error": "org_exists"}`.
+
+---
+
+### S117 — GET /admin/orgs lists all provisioned orgs
+
+```http
+GET /admin/orgs
+X-Admin-Token: <admin_token>
+```
+
+Expected: `200`, `orgs` array containing at least `sandbox`. Each entry has
+`slug`, `tier`, `org_id`.
+
+---
+
+### S118 — DELETE /admin/orgs/{slug} removes the org
+
+```http
+DELETE /admin/orgs/new-corp
+X-Admin-Token: <admin_token>
+```
+
+Expected: `200`, `{"status": "deleted", "slug": "new-corp"}`.
+
+A subsequent `GET /new-corp/default/jwks` returns `404 org_not_found`.
+
+---
+
+### S119 — DELETE /admin/orgs/sandbox is rejected
+
+```http
+DELETE /admin/orgs/sandbox
+X-Admin-Token: <admin_token>
+```
+
+Expected: `400`, `{"error": "cannot_delete_sandbox"}`.
+
+The sandbox org is permanent and cannot be removed via the admin API.
+
+---
+
+### S120 — PUT /admin/orgs/{slug}/config hot-reloads org identity store
+
+```http
+PUT /admin/orgs/acme-corp/config
+X-Admin-Token: <admin_token>
+Content-Type: text/plain
+
+<YAML identity config>
+```
+
+Expected: `200`, `{"status": "reloaded", "slug": "acme-corp", "users": N,
+"service_principals": M}`.
+
+After the reload, a token grant using credentials from the new config should
+succeed immediately without restarting the server.
+
+---
+
+## Hosted routing — quick reference (v0.7.0)
+
+| Feature | Scenario(s) |
+|---|---|
+| Hosted OIDC discovery | S103 |
+| Hosted JWKS | S104–S105 |
+| Hosted password grant | S106–S107 |
+| Hosted client_credentials grant | S108 |
+| API key gating | S109–S110 |
+| Unknown org 404 | S111 |
+| Sandbox no-auth | S112–S113 |
+| Org key isolation | S114–S115 |
+| Org CRUD (admin) | S116–S120 |

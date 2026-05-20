@@ -83,12 +83,18 @@ S100–S102 added.
 GitHub Milestone #3. Ships the first revenue-generating feature: the
 `mock.ksatechnologies.dev/{org}/{issuer}/token` hosted endpoint.
 
-### 🟢 Hosted endpoint (slug routing)
+### ✅ Hosted endpoint (slug routing) — Resolved
 
 Slug-based issuer routing: `/{org}/{issuer}/token` maps to the org's
 Postgres-backed config. `iss` claim constructed from `ISS_BASE/{org}/{issuer}`.
 Org provisioning via admin API (create org, push config). JWKS URL stable
 across CI job isolation — solves the #1 CI pain point.
+
+Shipped in v0.7.0, issue #47. `MOCK_IDP_HOSTED=true` enables the hosted
+router. `OrgRegistry` singleton manages per-org `YamlIdentityStore` /
+`PostgresIdentityStore` and per-org per-issuer key sets persisted in
+`org_jwks`. Sandbox org seeded at migration time (no API key required).
+124 tests passing.
 
 ### 🟢 GitHub Actions marketplace action
 
@@ -310,6 +316,16 @@ makes this possible if the need ever becomes concrete.
 ---
 
 ## Resolved
+
+### v0.7.0
+
+- ✓ **Hosted endpoint — org-scoped slug routing (issue #47)** — `MOCK_IDP_HOSTED=true`
+  enables `/{org}/{issuer}/*` routes. `OrgRegistry` singleton resolves slug → `OrgContext`
+  (per-org identity store + key resolver). API key gating for Pro orgs; sandbox tier
+  open with per-IP rate limiting (10 req/60 s). Per-org JWKS persisted in `org_jwks`
+  Postgres table — keys survive pod restarts. Org CRUD via `POST/GET/DELETE /admin/orgs`
+  and `PUT /admin/orgs/{slug}/config`. Alembic migration 0003 adds `orgs` + `org_jwks`
+  tables and seeds the sandbox org. 124 tests passing.
 
 ### CI/CD hardening (milestone #1, post-v0.5.6)
 

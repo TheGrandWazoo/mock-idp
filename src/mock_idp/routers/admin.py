@@ -1,11 +1,14 @@
+import os
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Body, Header, HTTPException, Query
 
 from .. import config as _cfg
 from ..keys import key_kid, rotate
 
 router = APIRouter(prefix="/admin")
+
+_HOSTED = os.getenv("MOCK_IDP_HOSTED", "").lower() in ("1", "true", "yes")
 
 
 @router.post("/rotate-jwks")
@@ -60,3 +63,104 @@ async def admin_audit(
         raise HTTPException(403, "invalid admin token")
     events, next_cursor = await _cfg.store.query_audit(limit=limit, cursor=cursor)
     return {"events": events, "next_cursor": next_cursor}
+
+
+# ── Hosted org management (MOCK_IDP_HOSTED=true only) ─────────────────────
+
+def _require_hosted():
+    if not _HOSTED:
+        raise HTTPException(404, detail={"error": "hosted mode not enabled"})
+
+
+@router.post("/orgs")
+async def admin_create_org(
+    x_admin_token: Optional[str] = Header(None),
+    slug: str = Body(...),
+    tier: str = Body(default="pro"),
+):
+    """Provision a new org. Returns the org slug and a one-time API key."""
+    if x_admin_token != _cfg.ADMIN_TOKEN:
+        raise HTTPException(403, "invalid admin token")
+    _require_hosted()
+
+    from ..org_registry import registry
+    if registry.get(slug) is not None:
+        raise HTTPException(409, detail={"error": "org_exists", "slug": slug})
+    if tier not in ("pro", "enterprise"):
+        raise HTTPException(400, detail={"error": "invalid_tier", "allowed": ["pro", "enterprise"]})
+
+    _, api_key = await registry.register(slug, tier=tier)
+    return {
+        "slug": slug,
+        "tier": tier,
+        "api_key": api_key,
+        "token_endpoint": f"{_cfg.ISS_BASE}/{slug}/{{issuer}}/token",
+        "jwks_uri": f"{_cfg.ISS_BASE}/{slug}/{{issuer}}/jwks",
+        "note": "Store the api_key now — it will not be shown again.",
+    }
+
+
+@router.get("/orgs")
+async def admin_list_orgs(x_admin_token: Optional[str] = Header(None)):
+    """List all provisioned orgs (slug, tier, org_id)."""
+    if x_admin_token != _cfg.ADMIN_TOKEN:
+        raise HTTPException(403, "invalid admin token")
+    _require_hosted()
+
+    from ..org_registry import registry
+    with registry._lock:
+        orgs = [
+            {"slug": ctx.slug, "tier": ctx.tier, "org_id": ctx.org_id}
+            for ctx in registry._orgs.values()
+        ]
+    return {"orgs": orgs}
+
+
+@router.delete("/orgs/{slug}")
+async def admin_delete_org(
+    slug: str,
+    x_admin_token: Optional[str] = Header(None),
+):
+    """Delete an org and all its identity data."""
+    if x_admin_token != _cfg.ADMIN_TOKEN:
+        raise HTTPException(403, "invalid admin token")
+    _require_hosted()
+    if slug == "sandbox":
+        raise HTTPException(400, detail={"error": "cannot_delete_sandbox"})
+
+    from ..org_registry import registry
+    deleted = await registry.deregister(slug)
+    if not deleted:
+        raise HTTPException(404, detail={"error": "org_not_found", "slug": slug})
+    return {"status": "deleted", "slug": slug}
+
+
+@router.put("/orgs/{slug}/config")
+async def admin_push_config(
+    slug: str,
+    x_admin_token: Optional[str] = Header(None),
+    config_yaml: str = Body(..., media_type="text/plain"),
+):
+    """Upload a YAML identity config for an org and hot-reload it."""
+    if x_admin_token != _cfg.ADMIN_TOKEN:
+        raise HTTPException(403, "invalid admin token")
+    _require_hosted()
+
+    from ..org_registry import registry
+    ctx = registry.get(slug)
+    if ctx is None:
+        raise HTTPException(404, detail={"error": "org_not_found", "slug": slug})
+    if slug == "sandbox":
+        raise HTTPException(400, detail={"error": "sandbox_config_is_readonly"})
+
+    try:
+        await registry.push_config(slug, config_yaml)
+    except Exception as exc:
+        raise HTTPException(422, detail={"error": "invalid_config", "detail": str(exc)}) from exc
+
+    return {
+        "status": "reloaded",
+        "slug": slug,
+        "users": len(ctx.store.users),
+        "service_principals": len(ctx.store.service_principals),
+    }

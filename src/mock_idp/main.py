@@ -14,6 +14,7 @@ from .routers import admin, debug, oidc, playground
 _log = logging.getLogger(__name__)
 
 _METRICS_ENABLED = os.getenv("MOCK_IDP_METRICS_ENABLED", "").lower() in ("1", "true", "yes")
+_HOSTED = os.getenv("MOCK_IDP_HOSTED", "").lower() in ("1", "true", "yes")
 
 
 async def _watch_config() -> None:
@@ -47,6 +48,15 @@ async def lifespan(app: FastAPI):
             _cfg.CONFIG_PATH,
         )
 
+    # Hosted mode: start the org registry (requires Postgres).
+    if _HOSTED:
+        dsn = os.getenv("MOCK_IDP_PG_DSN", "")
+        if not dsn:
+            raise RuntimeError("MOCK_IDP_HOSTED=true requires MOCK_IDP_PG_DSN to be set")
+        from .org_registry import registry
+        await registry.startup(dsn)
+        _log.info("Hosted mode enabled — org registry ready")
+
     yield
 
     if task:
@@ -56,10 +66,14 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
+    if _HOSTED:
+        from .org_registry import registry
+        await registry.shutdown()
+
     await _cfg.store.shutdown()
 
 
-app = FastAPI(title="Mock IDP", version="0.6.0", lifespan=lifespan)
+app = FastAPI(title="Mock IDP", version="0.7.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cfg.CORS_ORIGINS,
@@ -67,6 +81,12 @@ app.add_middleware(
     allow_headers=["*"],
     allow_credentials=False,
 )
+
+if _HOSTED:
+    from .routers import hosted as _hosted_router
+    # Hosted routes (3-segment paths) registered before flat routes (2-segment)
+    # so FastAPI's path matching sees them first.
+    app.include_router(_hosted_router.router)
 
 app.include_router(oidc.router)
 app.include_router(debug.router)

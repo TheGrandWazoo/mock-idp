@@ -769,8 +769,9 @@ Pro service multi-tenancy model.
 | `MOCK_IDP_ORG_ID` | `default` | Org context for the Postgres backend. All reads/writes use this value. |
 
 Single-org deployments (self-hosted, default Docker) leave `MOCK_IDP_ORG_ID`
-unset — every row uses `org_id='default'`. The hosted endpoint (v0.7.0) will
-route per-org by overriding this per-request.
+unset — every row uses `org_id='default'`. The hosted endpoint (v0.7.0)
+routes per-org by resolving the `{org}` slug from the path and loading that
+org's `PostgresIdentityStore` and key set from the `OrgRegistry`.
 
 ### Schema layout
 
@@ -906,3 +907,234 @@ are created lazily. Issue at least one token or JWKS request first.
 2. The file watcher uses inotify. Check the pod logs for `Reloading config` messages.
 3. Force a reload: `POST /admin/reload-config` with the correct `X-Admin-Token`.
 4. CORS origins are **not** hot-reloadable — they require a pod restart.
+
+---
+
+## Hosted routing (v0.7.0)
+
+The hosted endpoint adds a multi-tenant, org-scoped routing layer on top of the
+flat `/{issuer}/...` routes. It is off by default and enabled with a single env
+var.
+
+### Enabling hosted mode
+
+```bash
+export MOCK_IDP_HOSTED=true
+export MOCK_IDP_PG_DSN="postgresql://mock_idp:password@localhost:5432/mock_idp"
+```
+
+Hosted mode requires Postgres. The app raises `RuntimeError` at startup if
+`MOCK_IDP_HOSTED=true` and `MOCK_IDP_PG_DSN` is not set.
+
+### Route structure
+
+```text
+Hosted routes (3-segment — resolved first)
+───────────────────────────────────────────
+GET  /{org}/{issuer}/.well-known/openid-configuration
+GET  /{org}/{issuer}/jwks
+POST /{org}/{issuer}/token
+POST /{org}/{issuer}/introspect
+GET  /{org}/{issuer}/userinfo
+POST /{org}/{issuer}/token/wrong-sig      (test fixture)
+GET  /{org}/{issuer}/token/malformed      (test fixture)
+
+Flat routes (2-segment — registered after, no path conflict)
+─────────────────────────────────────────────────────────────
+GET  /{issuer}/...
+POST /{issuer}/...
+```
+
+The `{org}` segment is a URL-safe slug (`acme-corp`, `sandbox`, etc.). The
+`{issuer}` segment is a per-org issuer slug (`default`, `tenant-a`, etc.). The
+resulting `iss` claim in issued tokens is `{ISS_BASE}/{org}/{issuer}`.
+
+### Auth flow per request
+
+```text
+1. Resolve slug → OrgContext  (404 if unknown)
+2. Validate API key           (401 if wrong; sandbox orgs skip this step)
+3. Rate-limit check           (429 if sandbox IP exceeded 10 req/60 s)
+4. Delegate to grant handler  (password / client_credentials / token-exchange)
+```
+
+API key is passed as `Authorization: Bearer <api_key>`. The stored value is a
+SHA-256 hash — the plaintext is returned once at org creation and never stored
+again.
+
+### Org tiers
+
+| Tier | API key required | Rate limit | Notes |
+|---|---|---|---|
+| `sandbox` | No | 10 req / 60 s per IP | Public "try it out" tier; one shared org |
+| `pro` | Yes | None (app-level) | Paid; per-org key isolation |
+| `enterprise` | Yes | None | Same as pro; larger Postgres quota (future) |
+
+### Postgres schema additions (migration 0003)
+
+```sql
+CREATE TABLE orgs (
+    org_id      TEXT PRIMARY KEY,
+    slug        TEXT UNIQUE NOT NULL,
+    tier        TEXT NOT NULL DEFAULT 'pro',
+    api_key_hash TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE org_jwks (
+    org_id      TEXT NOT NULL REFERENCES orgs(org_id) ON DELETE CASCADE,
+    issuer_slug TEXT NOT NULL,
+    key_data    JSONB NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (org_id, issuer_slug)
+);
+```
+
+`org_jwks` persists the serialized JWK key set for each `(org, issuer)` pair so
+keys survive pod restarts. On first access, `_OrgKeyResolver` loads from
+Postgres; if no row exists it generates a new key set and persists it.
+
+The sandbox org is seeded in the migration:
+
+```sql
+INSERT INTO orgs (org_id, slug, tier) VALUES ('sandbox', 'sandbox', 'sandbox')
+ON CONFLICT DO NOTHING;
+```
+
+### OrgRegistry
+
+`OrgRegistry` is a module-level singleton (`mock_idp.org_registry.registry`).
+
+| Method | Description |
+|---|---|
+| `startup(dsn)` | Connect to Postgres, load all orgs into memory. |
+| `shutdown()` | Close connection pool. |
+| `get(slug)` | Return `OrgContext` or `None` (thread-safe). |
+| `register(slug, tier)` | Create org row, generate API key, return `(ctx, plaintext_key)`. |
+| `deregister(slug)` | Delete org + cascade (sandbox protected). |
+| `push_config(slug, yaml)` | Parse YAML, hot-reload `ctx.store` in-place. |
+
+Each `OrgContext` holds:
+
+| Field | Type | Description |
+|---|---|---|
+| `org_id` | `str` | Unique org identifier (same as slug for simplicity) |
+| `slug` | `str` | URL-safe name — appears in all endpoint paths |
+| `tier` | `str` | `sandbox`, `pro`, or `enterprise` |
+| `api_key_hash` | `str \| None` | SHA-256 of the API key; `None` for sandbox |
+| `store` | `YamlIdentityStore \| PostgresIdentityStore` | Identity data for this org |
+| `key_resolver` | `_OrgKeyResolver` | Per-org per-issuer key store backed by `org_jwks` |
+
+### Key isolation
+
+Each `(org, issuer)` pair has its own independent key store. A token issued at
+`/acme-corp/default/token` is signed by `acme-corp/default`'s key and cannot be
+verified against `/sandbox/default/jwks` — the key IDs are guaranteed disjoint.
+
+The kid format for hosted issuers is `mock-{org}/{issuer}-{n}` (RSA) and
+`mock-{org}/{issuer}-ec-1` (EC), inheriting from `_IssuerKeys` with the
+combined `{org}/{issuer}` path as the namespace.
+
+### Org CRUD admin API
+
+All org management endpoints require `X-Admin-Token` and `MOCK_IDP_HOSTED=true`.
+Returns `404 {"error": "hosted mode not enabled"}` otherwise.
+
+```text
+POST   /admin/orgs                    Create org (slug, tier). Returns api_key (one-time).
+GET    /admin/orgs                    List all orgs (slug, tier, org_id).
+DELETE /admin/orgs/{slug}             Delete org + all its data (sandbox protected).
+PUT    /admin/orgs/{slug}/config      Upload YAML identity config; hot-reloads the org store.
+```
+
+Example — provision a new Pro org:
+
+```bash
+curl -X POST http://localhost:8080/admin/orgs \
+  -H "X-Admin-Token: change-me" \
+  -H "Content-Type: application/json" \
+  -d '{"slug": "acme-corp", "tier": "pro"}'
+
+→ {
+    "slug": "acme-corp",
+    "tier": "pro",
+    "api_key": "mock-sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "token_endpoint": "http://localhost:8080/acme-corp/{issuer}/token",
+    "jwks_uri": "http://localhost:8080/acme-corp/{issuer}/jwks",
+    "note": "Store the api_key now — it will not be shown again."
+  }
+```
+
+Push a YAML identity config to that org:
+
+```bash
+curl -X PUT http://localhost:8080/admin/orgs/acme-corp/config \
+  -H "X-Admin-Token: change-me" \
+  -H "Content-Type: text/plain" \
+  --data-binary @config.example.yaml
+```
+
+### Sandbox org
+
+The `sandbox` org is pre-seeded at migration time. No API key is required:
+
+```bash
+# Issue a token against the sandbox — no Authorization header needed
+curl -X POST http://localhost:8080/sandbox/default/token \
+  -d "grant_type=password&username=alice&password=alice-pw&resource=api://serviceB"
+```
+
+The sandbox org uses the same `config.example.yaml` identity data as the flat
+router. Its `iss` claim is `{ISS_BASE}/sandbox/default`.
+
+Sandbox is rate-limited at 10 requests / 60 seconds per source IP with a
+`Retry-After` header in the 429 response. This limit is enforced in-process
+(no external dependency). For higher throughput testing, provision a Pro org.
+
+### Data flow (hosted)
+
+```text
+┌──────────────┐  POST /acme-corp/default/token         ┌─────────────────┐
+│  Test client │  Authorization: Bearer <api_key>        │  Python Mock    │
+│              │ ──────────────────────────────────────► │  (hosted mode)  │
+│              │                                         │                 │
+│              │                                         │  1. resolve     │
+│              │                                         │     OrgContext  │
+│              │                                         │  2. verify      │
+│              │                                         │     api_key     │
+│              │                                         │  3. load org    │
+│              │                                         │     store +     │
+│              │                                         │     key_resolver│
+│              │                                         │  4. grant logic │
+│              │                                         │     (password / │
+│              │                                         │      cc / te)   │
+│              │                                         │  5. sign with   │
+│              │  ◄── { access_token, ... } ─────────── │     org key     │
+└──────────────┘                                         └─────────────────┘
+
+iss claim: http://localhost:8080/acme-corp/default
+kid:       mock-acme-corp/default-1
+```
+
+### Troubleshooting (hosted)
+
+**`404 {"error": "org_not_found"}`**
+The slug in the URL doesn't match any provisioned org. Use `GET /admin/orgs` to
+list known slugs, or `POST /admin/orgs` to provision a new one.
+
+**`401 {"error": "invalid_api_key"}`**
+The `Authorization: Bearer <key>` header is missing, malformed, or the key
+doesn't match the stored hash. The plaintext key is only returned at org
+creation — if lost, delete and re-provision the org.
+
+**`429 {"error": "rate_limit_exceeded"}`**
+Sandbox IP rate limit hit. Wait for `Retry-After` seconds, or provision a Pro
+org for higher throughput.
+
+**`RuntimeError: MOCK_IDP_HOSTED=true requires MOCK_IDP_PG_DSN to be set`**
+Set the `MOCK_IDP_PG_DSN` environment variable before starting.
+
+**JWKS keys differ between pod restarts (flat mode) vs. hosted mode**
+In flat mode, keys are in-memory and lost on restart. In hosted mode, keys are
+persisted in `org_jwks`. A restart preserves existing tokens' validity in
+hosted mode — this is intentional.
