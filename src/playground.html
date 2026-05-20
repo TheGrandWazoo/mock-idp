@@ -408,6 +408,53 @@
         ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
     }
 
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    function getEffectiveShape() {
+      const override = $('shape').value;
+      if (override) return override;
+      const sel = selectedIdentity();
+      if (!sel || !state.identities) return 'v2';
+      const rec = sel.type === 'user'
+        ? state.identities.users[sel.key]
+        : state.identities.service_principals[sel.key];
+      return rec?.token_version || 'v2';
+    }
+
+    function audForShape(raw, shape) {
+      if (shape === 'v1') {
+        return UUID_RE.test(raw) ? 'api://' + raw : raw;
+      }
+      return (raw.startsWith('api://') && UUID_RE.test(raw.slice(6))) ? raw.slice(6) : raw;
+    }
+
+    function getRawAudience() {
+      const audSel = $('aud-select');
+      if (audSel && audSel.value !== '__custom__') {
+        const opt = audSel.options[audSel.selectedIndex];
+        return opt?.dataset?.raw || audSel.value;
+      }
+      return getAudience();
+    }
+
+    function updateAudienceForShape() {
+      const audSel = $('aud-select');
+      if (!audSel) return;
+      const shape = getEffectiveShape();
+      for (const opt of audSel.options) {
+        if (opt.value === '__custom__') continue;
+        const raw = opt.dataset.raw;
+        if (raw) opt.value = audForShape(raw, shape);
+      }
+      const hintEl = $('aud-shape-hint');
+      if (hintEl) {
+        hintEl.innerHTML = shape === 'v1'
+          ? `v1: <code>api://&lt;uuid&gt;</code> — Entra M2M / ADAL`
+          : `v2: <code>&lt;uuid&gt;</code> — Entra MSAL`;
+      }
+      updateGrantsPanel();
+    }
+
     function selectedIdentity() {
       const val = identitySel.value;
       if (val.startsWith('user:')) return { type: 'user', key: val.slice(5) };
@@ -471,7 +518,7 @@
       const opts = keys.map(k => {
         const app = apps[k];
         const label = app.label ? `${escapeHtml(k)} (${escapeHtml(app.label)})` : escapeHtml(k);
-        return `<option value="${escapeHtml(k)}">${label}</option>`;
+        return `<option value="${escapeHtml(k)}" data-raw="${escapeHtml(k)}">${label}</option>`;
       }).join('') + '<option value="__custom__">Custom…</option>';
 
       field.innerHTML = `
@@ -479,7 +526,8 @@
         <select id="aud-select">${opts}</select>
         <input type="text" id="aud-custom" placeholder="api://custom-audience"
                spellcheck="false" style="margin-top:0.4rem;display:none">
-        <div class="hint">Becomes the <code>aud</code> claim</div>`;
+        <div class="hint">Becomes the <code>aud</code> claim</div>
+        <div class="hint" id="aud-shape-hint"></div>`;
 
       $('aud-select').addEventListener('change', () => {
         const isCustom = $('aud-select').value === '__custom__';
@@ -495,14 +543,14 @@
         identityHint.innerHTML = '&nbsp;';
         credentialLabel.textContent = 'Password / secret';
         credentialInput.value = '';
-        updateGrantsPanel();
+        updateAudienceForShape();
         return;
       }
       const isUser = sel.type === 'user';
       const rec = isUser
         ? state.identities.users[sel.key]
         : state.identities.service_principals[sel.key];
-      if (!rec) { identityHint.innerHTML = '&nbsp;'; updateGrantsPanel(); return; }
+      if (!rec) { identityHint.innerHTML = '&nbsp;'; updateAudienceForShape(); return; }
 
       const defaultShape = rec.token_version || (isUser ? 'v2' : 'v1');
       const groups = (rec.groups || []).join(', ') || '—';
@@ -514,7 +562,7 @@
       credentialLabel.textContent = isUser ? 'Password' : 'Client secret';
       credentialInput.placeholder = isUser ? 'password' : 'client_secret';
       credentialInput.value = recallCredential(sel.type, sel.key);
-      updateGrantsPanel();
+      updateAudienceForShape();
     }
 
     function updateGrantsPanel() {
@@ -522,8 +570,9 @@
       const sel = selectedIdentity();
       const apps = (state.identities || {}).client_apps || {};
       const aud = getAudience();
-      const app = aud ? apps[aud] : null;
-      const roles = resolvedRoles(sel, aud);
+      const rawAud = getRawAudience();
+      const app = rawAud ? apps[rawAud] : null;
+      const roles = resolvedRoles(sel, rawAud);
 
       if (!sel) { panel.hidden = true; return; }
 
@@ -590,8 +639,11 @@
       }
 
       buildAudienceWidget();
+      updateAudienceForShape();
       updateIdentityHint();
     }
+
+    $('shape').addEventListener('change', updateAudienceForShape);
 
     const variantHints = {
       '': '',
