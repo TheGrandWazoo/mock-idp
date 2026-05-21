@@ -1,0 +1,43 @@
+services:
+  mock-idp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      CONFIG_PATH: /etc/mock-idp/config.yaml
+      ISS_BASE: http://mock-idp:8080
+    volumes:
+      - ./tests/integration/mock-idp-config.yaml:/etc/mock-idp/config.yaml:ro
+    ports:
+      - "18080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  httpbin:
+    image: mccutchen/go-httpbin:v2.14.0
+    environment:
+      PORT: "8080"
+
+  apisix:
+    image: apache/apisix:3.11.0-debian
+    volumes:
+      - ./tests/integration/apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./tests/integration/apisix/apisix.yaml:/usr/local/apisix/conf/apisix.yaml:ro
+    ports:
+      - "19080:9080"
+    depends_on:
+      mock-idp:
+        condition: service_healthy
+      httpbin:
+        condition: service_started
+    # healthy = APISIX is serving requests (even 401 means the plugin is running)
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:9080/alpha/get"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 30s

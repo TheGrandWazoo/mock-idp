@@ -1,0 +1,67 @@
+auth_mode: lax
+cors_allow_origins: ["*"]
+admin_token: it-admin-token
+
+tenants:
+  it-tenant:
+    provider: entra_id
+
+    users:
+      it-user:
+        password: it-user-pw
+        upn: it-user@example.com
+        preferred_username: it-user@example.com
+        oid: aaaaaaaa-aaaa-aaaa-aaaa-000000000001
+        token_version: v2
+        token_lifetime_seconds: 300
+        groups: [it-users]
+        allowed_audiences:
+          - api://alpha-api
+          - api://beta-api
+
+    service_principals:
+      alpha-client:
+        client_id: aaaaaaaa-aaaa-aaaa-aaaa-111111111111
+        secret: alpha-secret
+        label: Alpha Client
+        token_version: v1
+        token_lifetime_seconds: 300
+        groups: [service-accounts]
+        allowed_audiences: [api://alpha-api]
+
+      beta-client:
+        client_id: bbbbbbbb-bbbb-bbbb-bbbb-222222222222
+        secret: beta-secret
+        label: Beta Client
+        token_version: v1
+        token_lifetime_seconds: 300
+        groups: [service-accounts]
+        allowed_audiences: [api://beta-api]
+
+      short-lived-client:
+        client_id: cccccccc-cccc-cccc-cccc-333333333333
+        secret: short-secret
+        label: Short-Lived Client
+        token_version: v1
+        # token_lifetime_seconds: 1 — expires fast for IT006
+        token_lifetime_seconds: 1
+        groups: [service-accounts]
+        allowed_audiences: [api://alpha-api]
+
+    clients:
+      api://alpha-api:
+        app_id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+        label: Alpha API
+        roles: [read, write]
+        grants:
+          it-user: [read]
+          alpha-client: [read, write]
+          short-lived-client: [read]
+
+      api://beta-api:
+        app_id: bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb
+        label: Beta API
+        roles: [read, write]
+        grants:
+          it-user: [read]
+          beta-client: [read, write]

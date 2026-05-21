@@ -1,0 +1,38 @@
+routes:
+  - id: 1
+    uri: /alpha/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "httpbin:8080": 1
+    plugins:
+      proxy-rewrite:
+        regex_uri: ["^/alpha/(.*)", "/$1"]
+      openid-connect:
+        bearer_only: true
+        realm: apisix
+        client_id: "api://alpha-api"
+        client_secret: "placeholder"
+        discovery: "http://mock-idp:8080/it-tenant/.well-known/openid-configuration"
+        ssl_verify: false
+        set_userinfo_header: true
+
+  - id: 2
+    uri: /beta/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "httpbin:8080": 1
+    plugins:
+      proxy-rewrite:
+        regex_uri: ["^/beta/(.*)", "/$1"]
+      openid-connect:
+        bearer_only: true
+        realm: apisix
+        client_id: "api://beta-api"
+        client_secret: "placeholder"
+        discovery: "http://mock-idp:8080/it-tenant/.well-known/openid-configuration"
+        ssl_verify: false
+        set_userinfo_header: true
+
+#END

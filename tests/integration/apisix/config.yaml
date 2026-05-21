@@ -1,0 +1,10 @@
+# APISIX standalone mode — no etcd required.
+# Routes and upstreams are read from apisix.yaml in the same directory.
+deployment:
+  role: data_plane
+  role_data_plane:
+    config_provider: yaml
+
+apisix:
+  node_listen: 9080
+  enable_ipv6: false

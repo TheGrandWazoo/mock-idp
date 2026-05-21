@@ -36,6 +36,7 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+addopts = "--ignore=tests/integration"
 
 [tool.ruff]
 target-version = "py314"
