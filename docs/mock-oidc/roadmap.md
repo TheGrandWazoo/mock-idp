@@ -3,11 +3,12 @@
 What's not yet shipped, what's worth doing next, and what's parked unless a
 specific need surfaces.
 
-Current release is **v0.6.0**. The v0.3 surface is documented in ADR-002 and
+Current release is **v0.7.0**. The v0.3 surface is documented in ADR-002 and
 ADR-003. The v0.4 surface is documented in ADR-003 (Postgres backend) and the
 commit history. The v0.5 surface is documented in ADR-004 (per-issuer signing
 keys) and the commit history. The v0.6 surface is documented in the v0.6.0
-milestone issues (#44, #45, #46, #52).
+milestone issues (#44, #45, #46, #52). The v0.7 surface is documented in
+issue #47 and the commit history.
 
 ---
 
@@ -96,6 +97,13 @@ router. `OrgRegistry` singleton manages per-org `YamlIdentityStore` /
 `org_jwks`. Sandbox org seeded at migration time (no API key required).
 124 tests passing.
 
+---
+
+## v0.8.0 — Web admin UI
+
+GitHub Milestone #4. Depends on Postgres backend (v0.4.0) and multi-org
+schema (v0.6.0).
+
 ### 🟢 GitHub Actions marketplace action
 
 `uses: thegrandwazoo/mock-idp-action@v1`. Spins up the hosted endpoint
@@ -112,7 +120,7 @@ preserved; `act` chain added). No competitor handles this correctly.
 
 ### 🟢 Error / chaos injection admin API
 
-`POST /admin/chaos` sets per-issuer fault modes: `{mode: "error_500",
+`POST /admin/chaos/{issuer}` sets per-issuer fault modes: `{mode: "error_500",
 probability: 0.5}`, `{mode: "delay_ms", value: 2000}`,
 `{mode: "invalid_token"}`. Lets CI pipelines test auth failure paths
 without modifying config. Reset via `DELETE /admin/chaos/{issuer}`.
@@ -122,13 +130,6 @@ without modifying config. Reset via `DELETE /admin/chaos/{issuer}`.
 `.devcontainer/` with `devcontainer.json` that installs mock-idp and
 sets `CONFIG_PATH` + `ISS_BASE`. Publishable to the Dev Containers
 feature registry. Zero-setup onboarding for new contributors.
-
----
-
-## v0.8.0 — Web admin UI
-
-GitHub Milestone #4. Depends on Postgres backend (v0.4.0) and multi-org
-schema (v0.6.0).
 
 ### 🟢 Web admin UI
 
