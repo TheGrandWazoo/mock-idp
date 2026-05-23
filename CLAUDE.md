@@ -113,6 +113,16 @@ Always follow this sequence. Never skip ahead:
 4. **Update docs** — test-scenarios, user examples, troubleshooting callouts
 5. **Close the issue** — with version, commit, and doc pointers
 
+## Crash Recovery Checkpoints
+
+VS Code crashes on hibernate/sleep. After **every commit or issue close**, update all of:
+- **Roadmap** — mark resolved items ✅, correct milestone sections, update current-release header
+- **ADR** — add/update if a significant design decision was made
+- **GitHub milestone** — reassign issues if scope changed; close milestone when all issues are closed
+- **Memory** (`~/.claude/projects/.../memory/project_mock_idp.md`) — current release, open issues, next lift-off point
+
+The memory file is the authoritative re-entry record when a session restarts cold. Never leave it stale.
+
 ## Documentation Discipline
 
 Every feature, breaking change, or config change ships with:
