@@ -1,10 +1,19 @@
 import os
-from typing import Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
+from pydantic import BaseModel
 
+from .. import chaos as _chaos
 from .. import config as _cfg
 from ..keys import key_kid, rotate
+
+
+class ChaosConfig(BaseModel):
+    mode: Literal["error_500", "delay_ms", "invalid_token", "invalid_signature", "expired_token"]
+    probability: float = 1.0
+    value: int = 2000
+    skew_seconds: int = -3600
 
 router = APIRouter(prefix="/admin")
 
@@ -63,6 +72,44 @@ async def admin_audit(
         raise HTTPException(403, "invalid admin token")
     events, next_cursor = await _cfg.store.query_audit(limit=limit, cursor=cursor)
     return {"events": events, "next_cursor": next_cursor}
+
+
+# ── Chaos fault injection ──────────────────────────────────────────────────
+
+
+@router.get("/chaos")
+async def admin_list_chaos(x_admin_token: Optional[str] = Header(None)):
+    """Return all active per-issuer fault modes."""
+    if x_admin_token != _cfg.ADMIN_TOKEN:
+        raise HTTPException(403, "invalid admin token")
+    return {"faults": _chaos.get_faults()}
+
+
+@router.post("/chaos/{issuer}")
+async def admin_set_chaos(
+    issuer: str,
+    cfg: ChaosConfig,
+    x_admin_token: Optional[str] = Header(None),
+):
+    """Set a fault mode for *issuer*. Replaces any existing fault."""
+    if x_admin_token != _cfg.ADMIN_TOKEN:
+        raise HTTPException(403, "invalid admin token")
+    _chaos.set_fault(issuer, cfg.model_dump())
+    return {"status": "set", "issuer": issuer, "fault": cfg.model_dump()}
+
+
+@router.delete("/chaos/{issuer}")
+async def admin_clear_chaos(
+    issuer: str,
+    x_admin_token: Optional[str] = Header(None),
+):
+    """Clear the active fault for *issuer*."""
+    if x_admin_token != _cfg.ADMIN_TOKEN:
+        raise HTTPException(403, "invalid admin token")
+    cleared = _chaos.clear_fault(issuer)
+    if not cleared:
+        raise HTTPException(404, detail={"error": "no_fault_set", "issuer": issuer})
+    return {"status": "cleared", "issuer": issuer}
 
 
 # ── Hosted org management (MOCK_IDP_HOSTED=true only) ─────────────────────

@@ -33,6 +33,7 @@ from .tokens import (
     sign,
     verify_token,
 )
+from . import chaos as _chaos
 from .webhooks import fire_webhooks
 
 _log = logging.getLogger(__name__)
@@ -62,6 +63,30 @@ class TokenContext:
     keys: KeyResolver
 
 
+# ── Chaos helpers ──────────────────────────────────────────────────────────
+
+def _corrupt_or_sign(
+    claims: dict, fault: dict | None, ctx: TokenContext, alg: str, issuer: str
+) -> str:
+    """Sign the token, applying any active token-corruption fault for *issuer*.
+
+    Corruption modes that alter the token itself (invalid_token,
+    invalid_signature, expired_token) are handled here so both the
+    password/client_credentials path and the token-exchange path share the
+    same logic.  error_500 and delay_ms are handled earlier in apply_pre().
+    """
+    if fault:
+        mode = fault.get("mode")
+        if mode == "invalid_token":
+            return make_unsigned_token(claims)
+        if mode == "invalid_signature":
+            return sign(claims, ctx.keys.alt_key_for_alg(issuer, alg))
+        if mode == "expired_token":
+            claims = dict(claims)
+            claims["exp"] = int(time.time()) + int(fault.get("skew_seconds", -3600))
+    return sign(claims, ctx.keys.signing_key_for_alg(issuer, alg))
+
+
 # ── Grant handlers ─────────────────────────────────────────────────────────
 
 async def handle_token(issuer: str, request: Any, ctx: TokenContext) -> dict:
@@ -69,6 +94,7 @@ async def handle_token(issuer: str, request: Any, ctx: TokenContext) -> dict:
     form = dict(await request.form())
     headers = {k.lower(): v for k, v in request.headers.items()}
     await apply_test_hooks(headers)
+    await _chaos.apply_pre(issuer)
     grant_type = form.get("grant_type")
     aud = resolve_aud(form)
     effective_mode = ctx.issuer_modes.get(issuer) or ctx.mode
@@ -142,7 +168,8 @@ async def handle_token(issuer: str, request: Any, ctx: TokenContext) -> dict:
 
         claims["act"] = {"sub": sp._canonical_id}
         omit(claims, headers.get("x-omit-claims"))
-        access_token = sign(claims, ctx.keys.signing_key_for_alg(issuer, sp.signing_alg))
+        _fault = _chaos.get_fault(issuer)
+        access_token = _corrupt_or_sign(claims, _fault, ctx, sp.signing_alg, issuer)
         await _emit_event("token_issued", issuer, grant_type, claims, ctx)
         return {
             "access_token": access_token,
@@ -155,7 +182,8 @@ async def handle_token(issuer: str, request: Any, ctx: TokenContext) -> dict:
         raise HTTPException(400, "unsupported_grant_type")
 
     omit(claims, headers.get("x-omit-claims"))
-    access_token = sign(claims, ctx.keys.signing_key_for_alg(issuer, signing_alg))
+    _fault = _chaos.get_fault(issuer)
+    access_token = _corrupt_or_sign(claims, _fault, ctx, signing_alg, issuer)
     await _emit_event("token_issued", issuer, grant_type, claims, ctx)
     return {
         "access_token": access_token,

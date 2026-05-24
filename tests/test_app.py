@@ -1852,6 +1852,136 @@ def test_provider_isolation_entra_id_unaffected(client):
     assert "ver" in payload
 
 
+# ── Chaos fault injection (S121–S130) ──────────────────────────────────────
+
+_CHAOS_ADMIN = "change-me-in-real-deployments"
+_CHAOS_HEADERS = {"x-admin-token": _CHAOS_ADMIN}
+
+
+@pytest.fixture(autouse=False)
+def clear_chaos_after():
+    """Ensure every chaos test leaves the fault store clean."""
+    yield
+    import mock_idp.chaos as _c
+    _c._faults.clear()
+
+
+# S121 — GET /admin/chaos requires admin token
+def test_chaos_list_requires_admin_token(client):
+    r = client.get("/admin/chaos", headers={"x-admin-token": "bad"})
+    assert r.status_code == 403
+
+
+# S122 — GET /admin/chaos returns empty dict when no faults set
+def test_chaos_list_empty(client, clear_chaos_after):
+    r = client.get("/admin/chaos", headers=_CHAOS_HEADERS)
+    assert r.status_code == 200
+    assert r.json()["faults"] == {}
+
+
+# S123 — POST /admin/chaos/{issuer} sets a fault; GET reflects it
+def test_chaos_set_and_list(client, clear_chaos_after):
+    r = client.post(
+        "/admin/chaos/default",
+        json={"mode": "error_500", "probability": 1.0},
+        headers=_CHAOS_HEADERS,
+    )
+    assert r.status_code == 200
+    assert r.json()["fault"]["mode"] == "error_500"
+
+    r2 = client.get("/admin/chaos", headers=_CHAOS_HEADERS)
+    assert "default" in r2.json()["faults"]
+
+
+# S124 — DELETE /admin/chaos/{issuer} clears the fault
+def test_chaos_clear(client, clear_chaos_after):
+    client.post("/admin/chaos/default", json={"mode": "error_500"}, headers=_CHAOS_HEADERS)
+    r = client.delete("/admin/chaos/default", headers=_CHAOS_HEADERS)
+    assert r.status_code == 200
+    assert r.json()["status"] == "cleared"
+
+    r2 = client.get("/admin/chaos", headers=_CHAOS_HEADERS)
+    assert "default" not in r2.json()["faults"]
+
+
+# S125 — DELETE /admin/chaos/{issuer} returns 404 when no fault was set
+def test_chaos_clear_not_found(client, clear_chaos_after):
+    r = client.delete("/admin/chaos/no-such-issuer", headers=_CHAOS_HEADERS)
+    assert r.status_code == 404
+
+
+# S126 — error_500 mode returns HTTP 500 on /token
+def test_chaos_error_500(client, clear_chaos_after):
+    client.post("/admin/chaos/default", json={"mode": "error_500", "probability": 1.0}, headers=_CHAOS_HEADERS)
+    r = client.post(
+        "/default/token",
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw"},
+    )
+    assert r.status_code == 500
+    assert r.json()["detail"]["error"] == "chaos_error_500"
+
+
+# S127 — invalid_token mode returns a token that fails signature verification
+def test_chaos_invalid_token(client, clear_chaos_after):
+    client.post("/admin/chaos/default", json={"mode": "invalid_token"}, headers=_CHAOS_HEADERS)
+    r = client.post(
+        "/default/token",
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw"},
+    )
+    assert r.status_code == 200
+    token = r.json()["access_token"]
+    # alg:none token has an empty signature segment
+    parts = token.split(".")
+    assert parts[2] == ""
+
+
+# S128 — invalid_signature mode returns a token signed with a key not in JWKS
+def test_chaos_invalid_signature(client, clear_chaos_after):
+    client.post("/admin/chaos/default", json={"mode": "invalid_signature"}, headers=_CHAOS_HEADERS)
+    r = client.post(
+        "/default/token",
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw"},
+    )
+    assert r.status_code == 200
+    # Verify via /debug/decode — signature should not validate against published keys
+    decode_r = client.post("/debug/decode", json={"token": r.json()["access_token"]})
+    assert decode_r.status_code == 200
+    assert decode_r.json()["signature_validated_against_published_key"] is False
+
+
+# S129 — expired_token mode returns a token with exp in the past
+def test_chaos_expired_token(client, clear_chaos_after):
+    client.post(
+        "/admin/chaos/default",
+        json={"mode": "expired_token", "skew_seconds": -7200},
+        headers=_CHAOS_HEADERS,
+    )
+    r = client.post(
+        "/default/token",
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw"},
+    )
+    assert r.status_code == 200
+    payload = _decode_payload(r.json()["access_token"])
+    assert payload["exp"] < int(time.time())
+
+
+# S130 — clearing chaos restores normal token issuance
+def test_chaos_clear_restores_normal_tokens(client, clear_chaos_after):
+    client.post("/admin/chaos/default", json={"mode": "error_500", "probability": 1.0}, headers=_CHAOS_HEADERS)
+    assert client.post(
+        "/default/token",
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw"},
+    ).status_code == 500
+
+    client.delete("/admin/chaos/default", headers=_CHAOS_HEADERS)
+    r = client.post(
+        "/default/token",
+        data={"grant_type": "password", "username": "alice", "password": "alice-pw"},
+    )
+    assert r.status_code == 200
+    assert "access_token" in r.json()
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
