@@ -178,6 +178,58 @@ async def handle_token(issuer: str, request: Any, ctx: TokenContext) -> dict:
             "expires_in": max(0, claims["exp"] - int(time.time())),
         }
 
+    elif grant_type == "urn:ietf:params:oauth:grant-type:jwt-bearer":
+        # On-Behalf-Of (Entra ID style)
+        sp_key = form.get("client_id") or ""
+        sp = ctx.service_principals.get(sp_key)
+        if not sp or sp.secret != form.get("client_secret"):
+            raise HTTPException(401, "invalid_client")
+
+        assertion_str = (form.get("assertion") or "").strip()
+        if not assertion_str:
+            raise HTTPException(
+                400,
+                detail={"error": "invalid_request", "error_description": "assertion required"},
+            )
+
+        assertion_claims = verify_token(assertion_str, ctx.keys.jwks_keys(issuer))
+        if assertion_claims is None:
+            raise HTTPException(
+                400,
+                detail={"error": "invalid_grant", "error_description": "assertion signature invalid"},
+            )
+        if assertion_claims.get("exp", 0) < int(time.time()):
+            raise HTTPException(
+                400,
+                detail={"error": "invalid_grant", "error_description": "assertion is expired"},
+            )
+
+        aud = resolve_aud(form)
+        check_audience(sp_key, sp, aud, mode=effective_mode)
+        shape = resolve_shape(sp.token_version, form, headers.get("x-token-shape"))
+        expires_in = resolve_expiry(sp.token_lifetime_seconds, headers)
+        roles = apply_roles_override(resolve_roles(sp_key, sp, aud), headers)
+        provider = get_provider(sp._provider)
+        claims = provider.sp_claims(issuer, sp._canonical_id, sp, aud, shape, expires_in, roles)
+
+        for _c in ("sub", "oid", "tid", "preferred_username", "upn", "unique_name", "name"):
+            if _c in assertion_claims:
+                claims[_c] = assertion_claims[_c]
+        if "scp" in assertion_claims:
+            claims["scp"] = assertion_claims["scp"]
+
+        claims["act"] = {"sub": sp._canonical_id}
+        omit(claims, headers.get("x-omit-claims"))
+        _fault = _chaos.get_fault(issuer)
+        access_token = _corrupt_or_sign(claims, _fault, ctx, sp.signing_alg, issuer)
+        await _emit_event("token_issued", issuer, grant_type, claims, ctx)
+        return {
+            "access_token": access_token,
+            "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "token_type": "Bearer",
+            "expires_in": max(0, claims["exp"] - int(time.time())),
+        }
+
     else:
         raise HTTPException(400, "unsupported_grant_type")
 
@@ -318,6 +370,7 @@ async def handle_discovery(issuer: str, request: Any, ctx: TokenContext) -> dict
             "client_credentials",
             "password",
             "urn:ietf:params:oauth:grant-type:token-exchange",
+            "urn:ietf:params:oauth:grant-type:jwt-bearer",
         ],
         "introspection_endpoint_auth_methods_supported": ["client_secret_post"],
     }
