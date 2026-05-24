@@ -2108,6 +2108,147 @@ succeed immediately without restarting the server.
 
 ---
 
+## Chaos fault injection (v0.8.0)
+
+Per-issuer fault modes injected via the admin API. All endpoints require
+`X-Admin-Token`. Faults are in-memory only — a server restart clears them.
+
+### S121 — GET /admin/chaos requires admin token
+
+```http
+GET /admin/chaos
+X-Admin-Token: wrong
+```
+
+Expected: `403 Forbidden`.
+
+---
+
+### S122 — GET /admin/chaos returns empty dict when no faults are set
+
+```http
+GET /admin/chaos
+X-Admin-Token: <admin_token>
+```
+
+Expected: `200`, `{"faults": {}}`.
+
+---
+
+### S123 — POST /admin/chaos/{issuer} sets a fault
+
+```http
+POST /admin/chaos/default
+X-Admin-Token: <admin_token>
+Content-Type: application/json
+
+{"mode": "error_500", "probability": 1.0}
+```
+
+Expected: `200`, `{"status": "set", "issuer": "default", "fault": {"mode": "error_500", ...}}`.
+
+A subsequent `GET /admin/chaos` returns `{"faults": {"default": {"mode": "error_500", ...}}}`.
+
+---
+
+### S124 — DELETE /admin/chaos/{issuer} clears the fault
+
+```http
+DELETE /admin/chaos/default
+X-Admin-Token: <admin_token>
+```
+
+Expected: `200`, `{"status": "cleared", "issuer": "default"}`.
+
+A subsequent `GET /admin/chaos` returns `{"faults": {}}`.
+
+---
+
+### S125 — DELETE /admin/chaos/{issuer} returns 404 when no fault is set
+
+```http
+DELETE /admin/chaos/no-such-issuer
+X-Admin-Token: <admin_token>
+```
+
+Expected: `404`, `{"error": "no_fault_set", "issuer": "no-such-issuer"}`.
+
+---
+
+### S126 — error_500 mode returns HTTP 500 on /token
+
+```http
+POST /admin/chaos/default
+X-Admin-Token: <admin_token>
+{"mode": "error_500", "probability": 1.0}
+```
+
+Then:
+
+```http
+POST /default/token
+grant_type=password&username=alice&password=alice-pw
+```
+
+Expected: `500`, `{"detail": {"error": "chaos_error_500"}}`.
+
+Use `probability: 0.5` for probabilistic failures (useful for flakiness testing).
+
+---
+
+### S127 — invalid_token mode returns an unsigned (alg:none) token
+
+```http
+POST /admin/chaos/default
+X-Admin-Token: <admin_token>
+{"mode": "invalid_token"}
+```
+
+Then issue a token. The returned `access_token` will have an empty signature
+segment (`eyJ....<payload>.` — three parts, third is empty). Any gateway
+that enforces algorithm binding will reject it.
+
+---
+
+### S128 — invalid_signature mode returns a token signed with an unknown key
+
+```http
+POST /admin/chaos/default
+X-Admin-Token: <admin_token>
+{"mode": "invalid_signature"}
+```
+
+Then issue a token. The `access_token` is structurally valid JWT but signed
+with the alternate RSA key, which is not published in `/{issuer}/jwks`. A
+gateway doing JWKS-based validation will reject it.
+
+Verify via `POST /debug/decode` — `signature_validated_against_published_key`
+will be `false`.
+
+---
+
+### S129 — expired_token mode returns a token with exp in the past
+
+```http
+POST /admin/chaos/default
+X-Admin-Token: <admin_token>
+{"mode": "expired_token", "skew_seconds": -7200}
+```
+
+Then issue a token. The decoded `exp` will be approximately two hours in the
+past. Any JWT validation library will reject it as expired.
+
+`skew_seconds` defaults to `-3600` (one hour ago).
+
+---
+
+### S130 — clearing a fault restores normal token issuance
+
+Set `error_500`, confirm `/token` returns 500, then `DELETE /admin/chaos/default`
+and confirm `/token` returns a valid token again.
+
+---
+
 ## Hosted routing — quick reference (v0.7.0)
 
 | Feature | Scenario(s) |
@@ -2121,3 +2262,17 @@ succeed immediately without restarting the server.
 | Sandbox no-auth | S112–S113 |
 | Org key isolation | S114–S115 |
 | Org CRUD (admin) | S116–S120 |
+
+## Chaos fault injection — quick reference (v0.8.0)
+
+| Feature | Scenario(s) |
+|---|---|
+| Auth required on chaos endpoints | S121 |
+| List faults (empty) | S122 |
+| Set fault | S123 |
+| Clear fault | S124–S125 |
+| error_500 mode | S126 |
+| invalid_token mode | S127 |
+| invalid_signature mode | S128 |
+| expired_token mode | S129 |
+| Fault cleared restores normal flow | S130 |

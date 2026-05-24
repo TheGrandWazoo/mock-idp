@@ -118,12 +118,17 @@ OBO: service A presents its token, receives a token scoped for service B
 with the original user's identity threaded through (`scp`, `oid`, `tid`
 preserved; `act` chain added). No competitor handles this correctly.
 
-### 🟢 Error / chaos injection admin API
+### ✅ Error / chaos injection admin API — Resolved
 
 `POST /admin/chaos/{issuer}` sets per-issuer fault modes: `{mode: "error_500",
 probability: 0.5}`, `{mode: "delay_ms", value: 2000}`,
-`{mode: "invalid_token"}`. Lets CI pipelines test auth failure paths
-without modifying config. Reset via `DELETE /admin/chaos/{issuer}`.
+`{mode: "invalid_token"}`, `{mode: "invalid_signature"}`,
+`{mode: "expired_token", skew_seconds: -3600}`. Faults are in-memory only.
+`GET /admin/chaos` lists all active faults. `DELETE /admin/chaos/{issuer}`
+resets a fault. All endpoints require `X-Admin-Token`.
+
+Shipped in v0.8.0, issue #50 (commit 5f0f384). 10 new tests (S121–S130),
+121 total passing.
 
 ### 🟢 Dev Container feature
 
@@ -317,6 +322,14 @@ makes this possible if the need ever becomes concrete.
 ---
 
 ## Resolved
+
+### v0.8.0 (in progress)
+
+- ✓ **Error / chaos injection admin API (issue #50)** — `POST /admin/chaos/{issuer}`
+  sets per-issuer fault modes: `error_500`, `delay_ms`, `invalid_token`,
+  `invalid_signature`, `expired_token`. `GET /admin/chaos` lists active faults.
+  `DELETE /admin/chaos/{issuer}` resets. All require `X-Admin-Token`. Faults are
+  in-memory only. 10 new tests (S121–S130), 121 total passing.
 
 ### v0.7.0
 
