@@ -5,15 +5,37 @@
 [![Python](https://img.shields.io/badge/python-3.14%2B-blue?logo=python&logoColor=white)](https://python.org)
 [![Docker](https://img.shields.io/badge/ghcr.io-mock--idp-blue?logo=docker&logoColor=white)](https://github.com/TheGrandWazoo/mock-idp/pkgs/container/mock-idp)
 [![License: ELv2](https://img.shields.io/badge/license-ELv2-orange)](LICENSE)
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/TheGrandWazoo?label=Sponsors)](https://github.com/sponsors/TheGrandWazoo)
 
-FastAPI mock identity provider that emits configurable OIDC-compliant JWTs for
-testing API gateway authentication. Supports `password`, `client_credentials`, and
+A FastAPI mock identity provider that emits configurable OIDC-compliant JWTs for
+testing API gateway authentication — without touching your real IdP.
+
+Drop it into your CI pipeline or local dev environment and get a fully compliant
+OIDC server in seconds. Supports `password`, `client_credentials`, and
 `token-exchange` (RFC 8693) grants, token introspection (RFC 7662), per-identity
-token shape (v1/v2), per-issuer signing keys, lax/strict audience gating, admin
+token shape, per-issuer signing keys, lax/strict audience gating, admin
 overrides, key rotation, CORS, and a browser token playground.
 
 Full architecture, design decisions, test scenarios, and troubleshooting live in
 [`docs/mock-oidc/`](docs/mock-oidc/).
+
+---
+
+## Licensing
+
+**Free for internal and development use** — CI pipelines, local dev, integration
+testing. No limits, full features, self-hosted.
+
+**Commercial license required** if you offer mock-idp as a managed service or
+bundle it into a product you sell to third parties. This is the
+[Elastic License 2.0](LICENSE) restriction.
+
+**Hosted option available** — don't want to run the infrastructure yourself?
+A hosted version is available for teams that want it to just work.
+
+For commercial licensing or hosted access: [kevin.adams@ksatechnologies.com](mailto:kevin.adams@ksatechnologies.com)
+
+> If mock-idp saves you time in CI or development, [consider sponsoring](https://github.com/sponsors/TheGrandWazoo) to keep it actively maintained.
 
 ---
 
@@ -73,8 +95,9 @@ ConfigMap changes trigger an automatic pod restart via the `checksum/config` ann
 
 ## License
 
-[Elastic License 2.0](LICENSE) — free for internal and development use; hosting
-as a managed service for third parties requires a commercial license.
+[Elastic License 2.0](LICENSE) — free for internal and development use.
+Hosting as a managed service for third parties requires a commercial license.
+Contact [kevin.adams@ksatechnologies.com](mailto:kevin.adams@ksatechnologies.com).
 
 ## Project layout
 
