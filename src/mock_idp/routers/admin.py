@@ -1,5 +1,5 @@
 import os
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query
 from pydantic import BaseModel

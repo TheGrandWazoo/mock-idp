@@ -1962,7 +1962,6 @@ def test_obo_invalid_assertion_signature(client):
 
 def test_obo_expired_assertion(client):
     """An expired assertion returns 400 invalid_grant."""
-    import struct
     # Build an expired token by hand (past exp)
     header = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
     payload = base64.urlsafe_b64encode(
