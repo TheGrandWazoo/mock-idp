@@ -34,9 +34,11 @@ services:
         condition: service_healthy
       httpbin:
         condition: service_started
-    # healthy = APISIX is serving requests (even 401 means the plugin is running)
+    # healthy = APISIX is serving requests (even 401 means the plugin is running).
+    # Use 127.0.0.1 (not localhost) to avoid IPv6 resolution on containers where
+    # enable_ipv6: false means the IPv6 loopback is not bound.
     healthcheck:
-      test: ["CMD-SHELL", "curl -s -o /dev/null http://localhost:9080/alpha/get"]
+      test: ["CMD-SHELL", "curl -s --max-time 3 -o /dev/null http://127.0.0.1:9080/alpha/get"]
       interval: 5s
       timeout: 5s
       retries: 24

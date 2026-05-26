@@ -299,12 +299,28 @@ jobs:
         if: failure()
         run: docker compose -f docker-compose.integration.yml logs mock-idp 2>/dev/null || true
 
+      - name: Diagnose APISIX container on failure
+        if: failure()
+        run: |
+          echo "=== curl availability ==="
+          docker exec mock-idp-apisix-1 which curl 2>&1 || echo "curl not found"
+          echo "=== port 9080 listening? ==="
+          docker exec mock-idp-apisix-1 sh -c 'ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null || cat /proc/net/tcp6 /proc/net/tcp 2>/dev/null' || true
+          echo "=== nginx.pid ==="
+          docker exec mock-idp-apisix-1 cat /usr/local/apisix/logs/nginx.pid 2>/dev/null || echo "no nginx.pid"
+          echo "=== nginx error log (last 20) ==="
+          docker exec mock-idp-apisix-1 tail -20 /usr/local/apisix/logs/error.log 2>/dev/null || echo "no error.log"
+          echo "=== manual curl (127.0.0.1) ==="
+          docker exec mock-idp-apisix-1 sh -c 'curl -sv --max-time 3 http://127.0.0.1:9080/alpha/get 2>&1 | head -30; echo "curl exit: $?"' || true
+          echo "=== manual curl (localhost) ==="
+          docker exec mock-idp-apisix-1 sh -c 'curl -sv --max-time 3 http://localhost:9080/alpha/get 2>&1 | head -30; echo "curl exit: $?"' || true
+
       - name: Stop integration stack
         if: always()
         run: docker compose -f docker-compose.integration.yml down
 
       - name: Open issue on integration test failure
-        if: failure() && steps.integration.outcome == 'failure' && github.event_name == 'push'
+        if: failure() && github.event_name == 'push'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
