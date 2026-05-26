@@ -2108,6 +2108,100 @@ succeed immediately without restarting the server.
 
 ---
 
+## On-Behalf-Of (OBO) grant — Entra ID (v0.8.0)
+
+`grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`. Service A authenticates
+and presents a user token as the `assertion`; the outbound token carries the
+original user identity with `act.sub` identifying the intermediary.
+
+### S131 — OBO happy path
+
+```http
+POST /default/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer
+&assertion=<alice_access_token>
+&client_id=service-a
+&client_secret=serviceA-secret
+&resource=api://serviceB
+&requested_token_use=on_behalf_of
+```
+
+Expected: `200`, response includes `access_token`, `token_type: Bearer`,
+`issued_token_type: urn:ietf:params:oauth:token-type:access_token`.
+
+---
+
+### S132 — OBO preserves user identity
+
+Outbound token must carry `sub`, `oid`, `tid`, `preferred_username` from
+the inbound `assertion`. The user's identity is threaded through — the
+downstream service sees alice, not service-a.
+
+---
+
+### S133 — OBO act claim identifies the intermediary
+
+Outbound token contains `"act": {"sub": "<service-a canonical UUID>"}`.
+This lets the downstream service audit the delegation chain.
+
+---
+
+### S134 — OBO preserves scp from inbound token
+
+If the inbound assertion contains a `scp` claim, the OBO token carries
+it forward unchanged. If absent, no `scp` is added.
+
+---
+
+### S135 — invalid assertion signature returns invalid_grant
+
+```http
+POST /default/token
+grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer
+&assertion=not.a.valid.jwt
+&client_id=service-a&client_secret=serviceA-secret
+&resource=api://serviceB
+```
+
+Expected: `400`, `{"error": "invalid_grant", "error_description": "assertion signature invalid"}`.
+
+---
+
+### S136 — expired assertion returns invalid_grant
+
+An assertion with `exp` in the past returns `400 invalid_grant`. This is
+the Entra convention (vs. `invalid_request` used by RFC 8693 token-exchange).
+
+---
+
+### S137 — missing assertion returns invalid_request
+
+Omitting the `assertion` parameter returns `400 invalid_request`.
+
+---
+
+### S138 — bad intermediary credentials return 401
+
+Wrong `client_secret` for the calling service returns `401 invalid_client`.
+
+---
+
+## OBO quick reference (v0.8.0)
+
+| Feature | Scenario(s) |
+|---|---|
+| OBO happy path | S131 |
+| Identity threading (sub/oid/tid) | S132 |
+| act chain | S133 |
+| scp forwarding | S134 |
+| Invalid assertion | S135–S136 |
+| Missing assertion | S137 |
+| Bad intermediary auth | S138 |
+
+---
+
 ## Chaos fault injection (v0.8.0)
 
 Per-issuer fault modes injected via the admin API. All endpoints require

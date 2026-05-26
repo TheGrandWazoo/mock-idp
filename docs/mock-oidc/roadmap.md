@@ -111,12 +111,16 @@ schema (v0.6.0).
 and `MOCK_IDP_JWKS_URL` as step outputs. Free action is the highest-ROI
 growth lever — CI users are the natural Pro upsell.
 
-### 🟢 OBO flow (On-Behalf-Of, Entra-specific)
+### ✅ OBO flow (On-Behalf-Of, Entra-specific) — Resolved
 
 `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`. Entra-style
 OBO: service A presents its token, receives a token scoped for service B
 with the original user's identity threaded through (`scp`, `oid`, `tid`
-preserved; `act` chain added). No competitor handles this correctly.
+preserved; `act` chain added). Invalid/expired assertion → `invalid_grant`
+(Entra convention). Discovery `grant_types_supported` updated.
+
+Shipped in v0.8.0, issue #49 (commit 78c4ec2). 9 new tests (S131–S138),
+130 total passing.
 
 ### ✅ Error / chaos injection admin API — Resolved
 
