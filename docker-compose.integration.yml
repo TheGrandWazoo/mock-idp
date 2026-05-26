@@ -11,7 +11,7 @@ services:
     ports:
       - "18080:8080"
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/healthz"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"]
       interval: 5s
       timeout: 5s
       retries: 20
