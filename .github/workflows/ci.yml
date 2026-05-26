@@ -292,12 +292,12 @@ jobs:
         run: uv run pytest tests/integration/ -v --tb=short
 
       - name: Dump APISIX logs on failure
-        if: failure() && steps.integration.outcome == 'failure'
-        run: docker compose -f docker-compose.integration.yml logs apisix
+        if: failure()
+        run: docker compose -f docker-compose.integration.yml logs apisix 2>/dev/null || true
 
       - name: Dump mock-idp logs on failure
-        if: failure() && steps.integration.outcome == 'failure'
-        run: docker compose -f docker-compose.integration.yml logs mock-idp
+        if: failure()
+        run: docker compose -f docker-compose.integration.yml logs mock-idp 2>/dev/null || true
 
       - name: Stop integration stack
         if: always()
