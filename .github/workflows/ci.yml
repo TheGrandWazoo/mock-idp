@@ -318,18 +318,19 @@ jobs:
             gh issue comment "$EXISTING" --body \
               "Still failing on [\`${GITHUB_SHA:0:7}\`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           else
+            BODY_FILE=$(mktemp)
+            printf 'Integration tests failed.\n\n**Commit:** [%s](%s/commit/%s)\n**Run:** %s/actions/runs/%s\n\nCheck the workflow logs for APISIX and mock-idp output. This issue will be automatically closed when integration tests pass again.\n' \
+              "${GITHUB_SHA:0:7}" \
+              "${{ github.server_url }}/${{ github.repository }}" \
+              "${{ github.sha }}" \
+              "${{ github.server_url }}/${{ github.repository }}" \
+              "${{ github.run_id }}" \
+              > "$BODY_FILE"
             gh issue create \
               --title "Integration test failure: ${GITHUB_SHA:0:7}" \
               --label integration-failure \
-              --body "$(cat <<'EOF'
-Integration tests failed.
-
-**Commit:** [\`${GITHUB_SHA:0:7}\`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
-**Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-
-Check the workflow logs for APISIX and mock-idp output. This issue will be automatically closed when integration tests pass again.
-EOF
-              )"
+              --body-file "$BODY_FILE"
+            rm -f "$BODY_FILE"
           fi
 
       - name: Close integration failure issue on success
