@@ -1,0 +1,46 @@
+name: API integration test with mock-idp
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Start mock-idp — one step, no infrastructure
+      - uses: thegrandwazoo/mock-idp-action@v1
+        id: idp
+        with:
+          config: tests/mock-idp.yaml   # path to your identity config
+
+      # password grant — get a user token
+      - name: Get user token (password grant)
+        run: |
+          TOKEN=$(curl -sf -X POST "${{ steps.idp.outputs.token-url }}" \
+            --data-urlencode "grant_type=password" \
+            --data-urlencode "username=alice" \
+            --data-urlencode "password=alice-secret" \
+            --data-urlencode "resource=api://my-api" \
+            | jq -r .access_token)
+          echo "USER_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      # client_credentials grant — get a service token
+      - name: Get service token (client_credentials grant)
+        run: |
+          TOKEN=$(curl -sf -X POST "${{ steps.idp.outputs.token-url }}" \
+            --data-urlencode "grant_type=client_credentials" \
+            --data-urlencode "client_id=my-service" \
+            --data-urlencode "client_secret=service-secret" \
+            --data-urlencode "resource=api://my-api" \
+            | jq -r .access_token)
+          echo "SERVICE_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      # Your tests — pass the JWKS URL so your gateway/middleware can verify tokens
+      - name: Run integration tests
+        run: pytest tests/integration/
+        env:
+          MOCK_IDP_TOKEN_URL: ${{ steps.idp.outputs.token-url }}
+          MOCK_IDP_JWKS_URL: ${{ steps.idp.outputs.jwks-url }}
+          MOCK_IDP_ISSUER: ${{ steps.idp.outputs.issuer }}

@@ -4,6 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/TheGrandWazoo/mock-idp)](https://github.com/TheGrandWazoo/mock-idp/releases)
 [![Python](https://img.shields.io/badge/python-3.14%2B-blue?logo=python&logoColor=white)](https://python.org)
 [![Docker](https://img.shields.io/badge/ghcr.io-mock--idp-blue?logo=docker&logoColor=white)](https://github.com/TheGrandWazoo/mock-idp/pkgs/container/mock-idp)
+[![GitHub Actions](https://img.shields.io/badge/Marketplace-mock--idp--action-blue?logo=github)](https://github.com/marketplace/actions/mock-idp)
 [![License: ELv2](https://img.shields.io/badge/license-ELv2-orange)](LICENSE)
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/TheGrandWazoo?label=Sponsors)](https://github.com/sponsors/TheGrandWazoo)
 
@@ -68,6 +69,27 @@ docker run --rm -p 8080:8080 \
   -v "$PWD/config.example.yaml:/etc/mock-idp/config.yaml:ro" \
   mock-idp:local
 ```
+
+## Use in CI
+
+Add mock-idp to any GitHub Actions workflow with one step:
+
+```yaml
+- uses: thegrandwazoo/mock-idp-action@v1
+  id: idp
+  with:
+    config: tests/mock-idp.yaml
+
+- run: pytest tests/integration/
+  env:
+    MOCK_IDP_TOKEN_URL: ${{ steps.idp.outputs.token-url }}
+    MOCK_IDP_JWKS_URL: ${{ steps.idp.outputs.jwks-url }}
+```
+
+See [examples/github-actions/](examples/github-actions/) for full examples and
+[mock-idp-action](https://github.com/TheGrandWazoo/mock-idp-action) for all inputs and outputs.
+
+---
 
 ## CI / GitHub Actions
 
