@@ -49,6 +49,7 @@ def _ctx() -> TokenContext:
         iss_base=_cfg.ISS_BASE,
         users=_cfg.USERS,
         service_principals=_cfg.SERVICE_PRINCIPALS,
+        clients=_cfg.CLIENT_APPS,
         mode=_cfg.MODE,
         issuer_modes=_cfg.ISSUER_MODES,
         store=_cfg.store,

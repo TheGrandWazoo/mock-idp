@@ -57,6 +57,7 @@ class TokenContext:
     iss_base: str
     users: dict
     service_principals: dict
+    clients: dict
     mode: str
     issuer_modes: dict
     store: Any
@@ -362,6 +363,7 @@ async def handle_discovery(issuer: str, request: Any, ctx: TokenContext) -> dict
         "token_endpoint": f"{base}/token",
         "jwks_uri": f"{base}/jwks",
         "userinfo_endpoint": f"{base}/userinfo",
+        "introspection_endpoint": f"{base}/introspect",
         "response_types_supported": ["token", "id_token"],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": ["RS256", "ES256"],
@@ -407,6 +409,14 @@ async def handle_introspect(issuer: str, request: Any, ctx: TokenContext) -> dic
         return {"active": False}
     if claims.get("exp", 0) < int(time.time()):
         return {"active": False}
+
+    # If the caller is a registered resource server (client app), only report
+    # active=True for tokens scoped to that audience (RFC 7662 §2.2).
+    if caller_id in ctx.clients:
+        aud = claims.get("aud")
+        aud_list = aud if isinstance(aud, list) else [aud] if aud else []
+        if caller_id not in aud_list:
+            return {"active": False}
 
     response: dict = {"active": True, "token_type": "Bearer"}
     for claim, value in claims.items():

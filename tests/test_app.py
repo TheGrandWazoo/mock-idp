@@ -826,13 +826,11 @@ def test_introspect_missing_token(client):
     assert r.status_code == 400
 
 
-def test_introspect_not_advertised_in_discovery(client):
-    # We intentionally omit introspection_endpoint from discovery so that
-    # OIDC-aware API gateways (APISIX, Kong) use local JWT/JWKS validation
-    # instead of calling introspect with plugin credentials that aren't SPs.
+def test_introspect_discovery_includes_endpoint(client):
     r = client.get("/default/.well-known/openid-configuration")
     data = r.json()
-    assert "introspection_endpoint" not in data
+    assert "introspection_endpoint" in data
+    assert data["introspection_endpoint"].endswith("/default/introspect")
 
 
 # ── Token Exchange (RFC 8693) ──────────────────────────────────────────────

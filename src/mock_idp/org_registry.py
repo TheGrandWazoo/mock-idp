@@ -149,6 +149,7 @@ class OrgContext:
             iss_base=f"{iss_base}/{self.slug}",
             users=self.store.users,
             service_principals=self.store.service_principals,
+            clients=self.store.client_apps,
             mode=self.store.mode,
             issuer_modes=self.store.issuer_modes,
             store=self.store,

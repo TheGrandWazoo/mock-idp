@@ -20,6 +20,15 @@ tenants:
           - api://beta-api
 
     service_principals:
+      # Gateway service principals: APISIX openid-connect plugin authenticates
+      # to /introspect using its own client_id/client_secret as credentials.
+      # These SPs have no client_id UUID so they cannot issue tokens; they
+      # exist solely so the introspect endpoint accepts gateway auth calls.
+      api://alpha-api:
+        secret: placeholder
+      api://beta-api:
+        secret: placeholder
+
       alpha-client:
         client_id: aaaaaaaa-aaaa-aaaa-aaaa-111111111111
         secret: alpha-secret
