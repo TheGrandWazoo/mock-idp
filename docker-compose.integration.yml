@@ -34,11 +34,10 @@ services:
         condition: service_healthy
       httpbin:
         condition: service_started
-    # healthy = APISIX is serving requests (even 401 means the plugin is running).
-    # Use 127.0.0.1 (not localhost) to avoid IPv6 resolution on containers where
-    # enable_ipv6: false means the IPv6 loopback is not bound.
+    # healthy = APISIX nginx is up and serving.  Uses a plugin-free /_health
+    # route so a spinning openid-connect init_worker loop can't block the check.
     healthcheck:
-      test: ["CMD-SHELL", "curl -s --max-time 3 -o /dev/null http://127.0.0.1:9080/alpha/get"]
+      test: ["CMD-SHELL", "curl -sf --max-time 3 http://127.0.0.1:9080/_health"]
       interval: 5s
       timeout: 5s
       retries: 24
