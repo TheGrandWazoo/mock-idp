@@ -362,7 +362,6 @@ async def handle_discovery(issuer: str, request: Any, ctx: TokenContext) -> dict
         "token_endpoint": f"{base}/token",
         "jwks_uri": f"{base}/jwks",
         "userinfo_endpoint": f"{base}/userinfo",
-        "introspection_endpoint": f"{base}/introspect",
         "response_types_supported": ["token", "id_token"],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": ["RS256", "ES256"],
