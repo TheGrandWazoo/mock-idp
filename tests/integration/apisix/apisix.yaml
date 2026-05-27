@@ -1,7 +1,8 @@
 routes:
   # Plugin-free health probe — used by the Docker healthcheck so that a
   # spinning openid-connect init_worker loop doesn't block the health check.
-  - id: 0
+  # id must be a positive integer; 0 is rejected by APISIX schema validation.
+  - id: 100
     uri: /_health
     upstream:
       type: roundrobin
