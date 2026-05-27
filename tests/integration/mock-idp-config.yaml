@@ -59,7 +59,6 @@ tenants:
 
     clients:
       api://alpha-api:
-        app_id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
         label: Alpha API
         roles: [read, write]
         grants:
@@ -68,7 +67,6 @@ tenants:
           short-lived-client: [read]
 
       api://beta-api:
-        app_id: bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb
         label: Beta API
         roles: [read, write]
         grants:
