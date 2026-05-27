@@ -37,7 +37,7 @@ services:
     # healthy = APISIX nginx is up and serving.  Uses a plugin-free /_health
     # route so a spinning openid-connect init_worker loop can't block the check.
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf --max-time 3 http://127.0.0.1:9080/_health"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9080/_health"]
       interval: 5s
       timeout: 5s
       retries: 24

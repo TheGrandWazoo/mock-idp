@@ -358,6 +358,7 @@ async def handle_discovery(issuer: str, request: Any, ctx: TokenContext) -> dict
     base = f"{ctx.iss_base}/{issuer}"
     return {
         "issuer": base,
+        "authorization_endpoint": f"{base}/authorize",
         "token_endpoint": f"{base}/token",
         "jwks_uri": f"{base}/jwks",
         "userinfo_endpoint": f"{base}/userinfo",

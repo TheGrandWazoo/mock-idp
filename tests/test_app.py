@@ -41,6 +41,7 @@ def test_discovery(client):
     assert r.status_code == 200
     data = r.json()
     assert "token_endpoint" in data
+    assert "authorization_endpoint" in data
     assert data["issuer"].endswith("/default")
 
 
