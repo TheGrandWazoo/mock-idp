@@ -7,6 +7,7 @@
 [![GitHub Actions](https://img.shields.io/badge/Marketplace-mock--idp--action-blue?logo=github)](https://github.com/marketplace/actions/mock-idp)
 [![License: ELv2](https://img.shields.io/badge/license-ELv2-orange)](LICENSE)
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/TheGrandWazoo?label=Sponsors)](https://github.com/sponsors/TheGrandWazoo)
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/TheGrandWazoo/mock-idp)
 
 A FastAPI mock identity provider that emits configurable OIDC-compliant JWTs for
 testing API gateway authentication — without touching your real IdP.
