@@ -638,6 +638,14 @@
         identitySel.appendChild(og);
       }
 
+      // Default issuer to the first tenant found in the loaded identities.
+      const allRecords = [
+        ...Object.values(state.identities.users || {}),
+        ...Object.values(state.identities.service_principals || {}),
+      ];
+      const firstTenant = allRecords.map(r => r.tid).find(tid => tid);
+      if (firstTenant) $('issuer').value = firstTenant;
+
       buildAudienceWidget();
       updateAudienceForShape();
       updateIdentityHint();
