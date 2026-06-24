@@ -28,7 +28,7 @@ ratelimit = [
 
 [dependency-groups]
 dev = [
-    "ruff==0.15.13",
+    "ruff==0.15.16",
     "pytest==9.0.3",
     "prometheus-fastapi-instrumentator>=7.0",
     "slowapi>=0.1.9",
