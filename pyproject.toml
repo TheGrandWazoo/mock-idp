@@ -9,7 +9,7 @@ dependencies = [
     "python-multipart==0.0.28",
     "pyyaml==6.0.3",
     "pydantic==2.13.4",
-    "watchfiles>=1.1.1",
+    "watchfiles>=1.2.0",
     "joserfc>=1.6.5",
 ]
 
